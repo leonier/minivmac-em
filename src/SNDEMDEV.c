@@ -22,19 +22,14 @@
 	This code adapted from "Sound.c" in vMac by Philip Cummins.
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
+#include "PICOMMON.h"
 
-#include "MYOSGLUE.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
+#if EmClassicSnd
+
 #include "MINEM68K.h"
-#endif
 
 #include "SNDEMDEV.h"
 
-
-#if MySoundEnabled
 
 #define kSnd_Main_Offset   0x0300
 #define kSnd_Alt_Offset    0x5F00
@@ -220,4 +215,4 @@ label_retry:
 	}
 }
 
-#endif
+#endif /* EmClassicSnd */

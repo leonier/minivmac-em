@@ -18,13 +18,11 @@
 	Power Management Unit EMulated DEVice
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-#include "MYOSGLUE.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
+#include "PICOMMON.h"
+
+#if EmPMU
+
 #include "VIAEMDEV.h"
-#endif
 
 #include "PMUEMDEV.h"
 
@@ -440,3 +438,5 @@ GLOBALPROC PMU_DoTask(void)
 		PmuFromReady = 0;
 	}
 }
+
+#endif /* EmPMU */

@@ -1,7 +1,7 @@
 /*
 	OSGLUSDL.c
 
-	Copyright (C) 2012 Paul C. Pratt
+	Copyright (C) 2012 Paul C. Pratt, Manuel Alfayate
 
 	You can redistribute this file and/or modify it under the terms
 	of version 2 of the GNU General Public License as published by
@@ -15,22 +15,37 @@
 */
 
 /*
-	Operating System GLUe for SDL library
+	Operating System GLUe for SDL (1.2 and 2.0) library
 
 	All operating system dependent code for the
 	SDL Library should go here.
+
+	This is also the "reference" implementation. General
+	comments about what the platform dependent code
+	does should go here, and not be repeated for each
+	platform. Such comments are labeled with "OSGLUxxx common".
+
+	The SDL port can be used to create a more native port. Once
+	the SDL port runs on a new platform, the source code for
+	Mini vMac and SDL can be merged together. Then any SDL code
+	not used for this platform is removed, then a lot of clean
+	up is done step by step to remove the rest of the SDL code.
+	This technique is particular useful if you are not very
+	familiar with the new platform. It is long but straightforward,
+	and you can learn about the platform as you go. The Cocoa
+	port was created this way, with no previous knowledge of
+	Cocoa or Objective-C.
+
+	The main entry point 'main' is at the end of this file.
 */
 
-#include "CNFGRAPI.h"
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
+#include "OSGCOMUI.h"
+#include "OSGCOMUD.h"
 
-#include "MYOSGLUE.h"
+#ifdef WantOSGLUSDL
 #ifdef EMSCRIPTEN
 #include <emscripten.h>
 #endif
-#include "STRCONST.h"
-
 /* --- some simple utilities --- */
 
 GLOBALOSGLUPROC MyMoveBytes(anyp srcPtr, anyp destPtr, si5b byteCount)
@@ -42,7 +57,29 @@ GLOBALOSGLUPROC MyMoveBytes(anyp srcPtr, anyp destPtr, si5b byteCount)
 
 #define NeedCell2PlainAsciiMap 1
 
+#define dbglog_OSGInit (0 && dbglog_HAVE)
+
 #include "INTLCHAR.h"
+
+#ifndef SDL_MAJOR_VERSION
+#define SDL_MAJOR_VERSION 0
+#endif
+
+#ifndef CanGetAppPath
+#if 2 == SDL_MAJOR_VERSION
+#define CanGetAppPath 1
+#else
+#define CanGetAppPath 0
+#endif
+#endif
+
+LOCALVAR char *d_arg = NULL;
+LOCALVAR char *n_arg = NULL;
+
+#if CanGetAppPath
+LOCALVAR char *app_parent = NULL;
+LOCALVAR char *pref_dir = NULL;
+#endif
 
 #if defined (EMSCRIPTEN) && defined (USE_EMULARITY_MVMACDIR)
 LOCALVAR char emularity_mvmacdir[] = "/emulator/minivmac";
@@ -94,7 +131,12 @@ LOCALPROC MyMayFree(char *p)
 
 #if dbglog_HAVE
 
+#ifndef dbglog_ToStdErr
 #define dbglog_ToStdErr 0
+#endif
+#ifndef dbglog_ToSDL_Log
+#define dbglog_ToSDL_Log 0
+#endif
 
 #if ! dbglog_ToStdErr
 LOCALVAR FILE *dbglog_File = NULL;
@@ -102,10 +144,27 @@ LOCALVAR FILE *dbglog_File = NULL;
 
 LOCALFUNC blnr dbglog_open0(void)
 {
-#if dbglog_ToStdErr
+#if dbglog_ToStdErr || dbglog_ToSDL_Log
 	return trueblnr;
 #else
-	dbglog_File = fopen("dbglog.txt", "w");
+#if CanGetAppPath
+	if (NULL == app_parent)
+#endif
+	{
+		dbglog_File = fopen("dbglog.txt", "w");
+	}
+#if CanGetAppPath
+	else {
+		char *t = NULL;
+
+		if (mnvm_noErr == ChildPath(app_parent, "dbglog.txt", &t)) {
+			dbglog_File = fopen(t, "w");
+		}
+
+		MyMayFree(t);
+	}
+#endif
+
 	return (NULL != dbglog_File);
 #endif
 }
@@ -114,6 +173,16 @@ LOCALPROC dbglog_write0(char *s, uimr L)
 {
 #if dbglog_ToStdErr
 	(void) fwrite(s, 1, L, stderr);
+#elif dbglog_ToSDL_Log
+	char t[256 + 1];
+
+	if (L > 256) {
+		L = 256;
+	}
+	(void) memcpy(t, s, L);
+	t[L] = 1;
+
+	SDL_Log("%s", t);
 #else
 	if (dbglog_File != NULL) {
 		(void) fwrite(s, 1, L, dbglog_File);
@@ -162,9 +231,48 @@ LOCALPROC NativeStrFromCStr(char *r, char *s)
 
 /* --- drives --- */
 
+/*
+	OSGLUxxx common:
+	define NotAfileRef to some value that is different
+	from any valid open file reference.
+*/
 #define NotAfileRef NULL
 
-LOCALVAR FILE *Drives[NumDrives]; /* open disk image files */
+#ifndef UseRWops
+#define UseRWops 0
+#endif
+
+#if UseRWops
+#define MyFilePtr SDL_RWops *
+#define MySeek SDL_RWseek
+	/*
+		unlike fseek, SDL_RWseek returns nonzero value on success
+	*/
+#define MySeekSet RW_SEEK_SET
+#define MySeekCur RW_SEEK_CUR
+#define MySeekEnd RW_SEEK_END
+#define MyFileRead(ptr, size, nmemb, stream) \
+	SDL_RWread(stream, ptr, size, nmemb)
+#define MyFileWrite(ptr, size, nmemb, stream) \
+	SDL_RWwrite(stream, ptr, size, nmemb)
+#define MyFileTell SDL_RWtell
+#define MyFileClose SDL_RWclose
+#define MyFileOpen SDL_RWFromFile
+#else
+#define MyFilePtr FILE *
+#define MySeek fseek
+#define MySeekSet SEEK_SET
+#define MySeekCur SEEK_CUR
+#define MySeekEnd SEEK_END
+#define MyFileRead fread
+#define MyFileWrite fwrite
+#define MyFileTell ftell
+#define MyFileClose fclose
+#define MyFileOpen fopen
+#define MyFileEof feof
+#endif
+
+LOCALVAR MyFilePtr Drives[NumDrives]; /* open disk image files */
 
 LOCALPROC InitDrives(void)
 {
@@ -183,15 +291,21 @@ GLOBALOSGLUFUNC tMacErr vSonyTransfer(blnr IsWrite, ui3p Buffer,
 	tDrive Drive_No, ui5r Sony_Start, ui5r Sony_Count,
 	ui5r *Sony_ActCount)
 {
+	/*
+		OSGLUxxx common:
+		return 0 if it succeeds, nonzero (a
+		Macintosh style error code, but -1
+		will do) on failure.
+	*/
 	tMacErr err = mnvm_miscErr;
-	FILE *refnum = Drives[Drive_No];
+	MyFilePtr refnum = Drives[Drive_No];
 	ui5r NewSony_Count = 0;
 
-	if (0 == fseek(refnum, Sony_Start, SEEK_SET)) {
+	if (MySeek(refnum, Sony_Start, MySeekSet) >= 0) {
 		if (IsWrite) {
-			NewSony_Count = fwrite(Buffer, 1, Sony_Count, refnum);
+			NewSony_Count = MyFileWrite(Buffer, 1, Sony_Count, refnum);
 		} else {
-			NewSony_Count = fread(Buffer, 1, Sony_Count, refnum);
+			NewSony_Count = MyFileRead(Buffer, 1, Sony_Count, refnum);
 		}
 
 		if (NewSony_Count == Sony_Count) {
@@ -208,12 +322,20 @@ GLOBALOSGLUFUNC tMacErr vSonyTransfer(blnr IsWrite, ui3p Buffer,
 
 GLOBALOSGLUFUNC tMacErr vSonyGetSize(tDrive Drive_No, ui5r *Sony_Count)
 {
+	/*
+		OSGLUxxx common:
+		set Sony_Count to the size of disk image number Drive_No.
+
+		return 0 if it succeeds, nonzero (a
+		Macintosh style error code, but -1
+		will do) on failure.
+	*/
 	tMacErr err = mnvm_miscErr;
-	FILE *refnum = Drives[Drive_No];
+	MyFilePtr refnum = Drives[Drive_No];
 	long v;
 
-	if (0 == fseek(refnum, 0, SEEK_END)) {
-		v = ftell(refnum);
+	if (MySeek(refnum, 0, MySeekEnd) >= 0) {
+		v = MyFileTell(refnum);
 		if (v >= 0) {
 			*Sony_Count = v;
 			err = mnvm_noErr;
@@ -225,11 +347,19 @@ GLOBALOSGLUFUNC tMacErr vSonyGetSize(tDrive Drive_No, ui5r *Sony_Count)
 
 LOCALFUNC tMacErr vSonyEject0(tDrive Drive_No, blnr deleteit)
 {
-	FILE *refnum = Drives[Drive_No];
+	/*
+		OSGLUxxx common:
+		close disk image number Drive_No.
+
+		return 0 if it succeeds, nonzero (a
+		Macintosh style error code, but -1
+		will do) on failure.
+	*/
+	MyFilePtr refnum = Drives[Drive_No];
 
 	DiskEjectedNotify(Drive_No);
 
-	fclose(refnum);
+	MyFileClose(refnum);
 	Drives[Drive_No] = NotAfileRef; /* not really needed */
 
 	return mnvm_noErr;
@@ -251,9 +381,15 @@ LOCALPROC UnInitDrives(void)
 	}
 }
 
-LOCALFUNC blnr Sony_Insert0(FILE *refnum, blnr locked,
+LOCALFUNC blnr Sony_Insert0(MyFilePtr refnum, blnr locked,
 	char *drivepath)
 {
+	/*
+		OSGLUxxx common:
+		Given reference to open file, mount it as a disk image file.
+		if "locked", then mount it as a locked disk.
+	*/
+
 	tDrive Drive_No;
 	blnr IsOk = falseblnr;
 
@@ -272,7 +408,7 @@ LOCALFUNC blnr Sony_Insert0(FILE *refnum, blnr locked,
 	}
 
 	if (! IsOk) {
-		fclose(refnum);
+		MyFileClose(refnum);
 	}
 
 	return IsOk;
@@ -282,10 +418,10 @@ LOCALFUNC blnr Sony_Insert1(char *drivepath, blnr silentfail)
 {
 	blnr locked = falseblnr;
 	/* printf("Sony_Insert1 %s\n", drivepath); */
-	FILE *refnum = fopen(drivepath, "rb+");
+	MyFilePtr refnum = MyFileOpen(drivepath, "rb+");
 	if (NULL == refnum) {
 		locked = trueblnr;
-		refnum = fopen(drivepath, "rb");
+		refnum = MyFileOpen(drivepath, "rb");
 	}
 	if (NULL == refnum) {
 		if (! silentfail) {
@@ -300,16 +436,21 @@ LOCALFUNC blnr Sony_Insert1(char *drivepath, blnr silentfail)
 LOCALFUNC tMacErr LoadMacRomFrom(char *path)
 {
 	tMacErr err;
-	FILE *ROM_File;
+	MyFilePtr ROM_File;
 	int File_Size;
 
-	ROM_File = fopen(path, "rb");
+	ROM_File = MyFileOpen(path, "rb");
 	if (NULL == ROM_File) {
 		err = mnvm_fnfErr;
 	} else {
-		File_Size = fread(ROM, 1, kROM_Size, ROM_File);
+		File_Size = MyFileRead(ROM, 1, kROM_Size, ROM_File);
 		if (File_Size != kROM_Size) {
-			if (feof(ROM_File)) {
+#ifdef MyFileEof
+			if (MyFileEof(ROM_File))
+#else
+			if (File_Size > 0)
+#endif
+			{
 				MacMsgOverride(kStrShortROMTitle,
 					kStrShortROMMessage);
 				err = mnvm_eofErr;
@@ -321,13 +462,14 @@ LOCALFUNC tMacErr LoadMacRomFrom(char *path)
 		} else {
 			err = ROM_IsValid();
 		}
-		fclose(ROM_File);
+		MyFileClose(ROM_File);
 	}
 
 	return err;
 }
 
-#if 0 /* no drag and drop to make use of this */
+#if 2 == SDL_MAJOR_VERSION
+	/* otherwise no drag and drop to make use of this */
 LOCALFUNC blnr Sony_Insert1a(char *drivepath, blnr silentfail)
 {
 	blnr v;
@@ -344,7 +486,27 @@ LOCALFUNC blnr Sony_Insert1a(char *drivepath, blnr silentfail)
 
 LOCALFUNC blnr Sony_Insert2(char *s)
 {
-	return Sony_Insert1(s, trueblnr);
+	char *d =
+#if CanGetAppPath
+		(NULL == d_arg) ? app_parent :
+#endif
+		d_arg;
+	blnr IsOk = falseblnr;
+
+	if (NULL == d) {
+		IsOk = Sony_Insert1(s, trueblnr);
+	} else
+	{
+		char *t = NULL;
+
+		if (mnvm_noErr == ChildPath(d, s, &t)) {
+			IsOk = Sony_Insert1(t, trueblnr);
+		}
+
+		MyMayFree(t);
+	}
+
+	return IsOk;
 }
 
 LOCALFUNC blnr Sony_InsertIth(int i)
@@ -379,6 +541,69 @@ LOCALFUNC blnr LoadInitialImages(void)
 
 /* --- ROM --- */
 
+LOCALVAR char *rom_path = NULL;
+
+#if CanGetAppPath
+LOCALFUNC tMacErr LoadMacRomFromPrefDir(void)
+{
+	tMacErr err;
+	char *t = NULL;
+	char *t2 = NULL;
+
+	if (NULL == pref_dir) {
+		err = mnvm_fnfErr;
+	} else
+	if (mnvm_noErr != (err =
+		ChildPath(pref_dir, "mnvm_rom", &t)))
+	{
+		/* fail */
+	} else
+	if (mnvm_noErr != (err =
+		ChildPath(t, RomFileName, &t2)))
+	{
+		/* fail */
+	} else
+	{
+		err = LoadMacRomFrom(t2);
+	}
+
+	MyMayFree(t2);
+	MyMayFree(t);
+
+	return err;
+}
+#endif
+
+LOCALFUNC tMacErr LoadMacRomFromAppPar(void)
+{
+	tMacErr err;
+	char *d =
+#if CanGetAppPath
+		(NULL == d_arg) ? app_parent :
+#endif
+		d_arg;
+
+	if (NULL == d) {
+		err = mnvm_fnfErr;
+	} else
+	{
+		char *t = NULL;
+
+		if (mnvm_noErr != (err =
+			ChildPath(d, RomFileName, &t)))
+		{
+			/* fail */
+		} else
+		{
+			err = LoadMacRomFrom(t);
+		}
+
+		MyMayFree(t);
+	}
+
+	return err;
+}
+
 #if defined (EMSCRIPTEN) && defined (USE_EMULARITY_MVMACDIR)
 LOCALFUNC tMacErr LoadMacRomFromEmularityMvmacDir(void)
 {
@@ -399,8 +624,6 @@ LOCALFUNC tMacErr LoadMacRomFromEmularityMvmacDir(void)
 }
 #endif
 
-LOCALVAR char *rom_path = NULL;
-
 LOCALFUNC blnr LoadMacRom(void)
 {
 	tMacErr err;
@@ -409,7 +632,11 @@ LOCALFUNC blnr LoadMacRom(void)
 		|| (mnvm_fnfErr == (err = LoadMacRomFrom(rom_path))))
 #if defined (EMSCRIPTEN) && defined (USE_EMULARITY_MVMACDIR)
 	if (mnvm_fnfErr == (err = LoadMacRomFromEmularityMvmacDir()))
-#endif		
+#endif
+	if (mnvm_fnfErr == (err = LoadMacRomFromAppPar()))
+#if CanGetAppPath
+	if (mnvm_fnfErr == (err = LoadMacRomFromPrefDir()))
+#endif
 	if (mnvm_fnfErr == (err = LoadMacRomFrom(RomFileName)))
 	{
 	}
@@ -419,6 +646,11 @@ LOCALFUNC blnr LoadMacRom(void)
 
 /* --- video out --- */
 
+#if MayFullScreen && (2 == SDL_MAJOR_VERSION)
+LOCALVAR int hOffset;
+LOCALVAR int vOffset;
+#endif
+
 #if VarFullScreen
 LOCALVAR blnr UseFullScreen = (WantInitFullScreen != 0);
 #endif
@@ -427,18 +659,30 @@ LOCALVAR blnr UseFullScreen = (WantInitFullScreen != 0);
 LOCALVAR blnr UseMagnify = (WantInitMagnify != 0);
 #endif
 
+#ifndef UseSDLscaling
+#define UseSDLscaling 0
+#endif
+
 LOCALVAR blnr gBackgroundFlag = falseblnr;
 LOCALVAR blnr gTrueBackgroundFlag = falseblnr;
 LOCALVAR blnr CurSpeedStopped = trueblnr;
 
-#if EnableMagnify
+#if EnableMagnify && ! UseSDLscaling
 #define MaxScale MyWindowScale
 #else
 #define MaxScale 1
 #endif
 
 
+#if 1 == SDL_MAJOR_VERSION
 LOCALVAR SDL_Surface *my_surface = nullpr;
+#define my_format (my_surface->format)
+#elif 2 == SDL_MAJOR_VERSION
+LOCALVAR SDL_Window *my_main_wind = NULL;
+LOCALVAR SDL_Renderer *my_renderer = NULL;
+LOCALVAR SDL_Texture *my_texture = NULL;
+LOCALVAR SDL_PixelFormat *my_format = NULL;
+#endif
 
 LOCALVAR ui3p ScalingBuff = nullpr;
 
@@ -479,6 +723,8 @@ LOCALVAR ui3p CLUT_final;
 
 #include "SCRNMAPR.h"
 
+#if EnableMagnify && ! UseSDLscaling
+
 #define ScrnMapr_DoMap UpdateBWDepth3ScaledCopy
 #define ScrnMapr_Src GetCurDrawBuff()
 #define ScrnMapr_Dst ScalingBuff
@@ -508,6 +754,8 @@ LOCALVAR ui3p CLUT_final;
 #define ScrnMapr_Scale MyWindowScale
 
 #include "SCRNMAPR.h"
+
+#endif /* EnableMagnify && ! UseSDLscaling */
 
 
 #if (0 != vMacScreenDepth) && (vMacScreenDepth < 4)
@@ -539,6 +787,8 @@ LOCALVAR ui3p CLUT_final;
 
 #include "SCRNMAPR.h"
 
+#if EnableMagnify && ! UseSDLscaling
+
 #define ScrnMapr_DoMap UpdateColorDepth3ScaledCopy
 #define ScrnMapr_Src GetCurDrawBuff()
 #define ScrnMapr_Dst ScalingBuff
@@ -569,12 +819,15 @@ LOCALVAR ui3p CLUT_final;
 
 #include "SCRNMAPR.h"
 
+#endif /* EnableMagnify && ! UseSDLscaling */
+
 #endif
 
 
 LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 	ui4r bottom, ui4r right)
 {
+#if 0 != SDL_MAJOR_VERSION
 	int i;
 	int j;
 	ui3b *p;
@@ -583,12 +836,87 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 	Uint32 CLUT_pixel[CLUT_size];
 #endif
 	Uint32 BWLUT_pixel[2];
-	ui5r top2 = top;
-	ui5r left2 = left;
-	ui5r bottom2 = bottom;
-	ui5r right2 = right;
+	ui5r top2;
+	ui5r left2;
+	ui5r bottom2;
+	ui5r right2;
+	void *pixels;
+	int pitch;
+
+#if 2 == SDL_MAJOR_VERSION
+	SDL_Rect src_rect;
+	SDL_Rect dst_rect;
+	int XDest;
+	int YDest;
+	int DestWidth;
+	int DestHeight;
+
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		if (top < ViewVStart) {
+			top = ViewVStart;
+		}
+		if (left < ViewHStart) {
+			left = ViewHStart;
+		}
+		if (bottom > ViewVStart + ViewVSize) {
+			bottom = ViewVStart + ViewVSize;
+		}
+		if (right > ViewHStart + ViewHSize) {
+			right = ViewHStart + ViewHSize;
+		}
+
+		if ((top >= bottom) || (left >= right)) {
+			goto label_exit;
+		}
+	}
+#endif
+
+	XDest = left;
+	YDest = top;
+	DestWidth = (right - left);
+	DestHeight = (bottom - top);
+
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		XDest -= ViewHStart;
+		YDest -= ViewVStart;
+	}
+#endif
 
 #if EnableMagnify
+	if (UseMagnify) {
+		XDest *= MyWindowScale;
+		YDest *= MyWindowScale;
+		DestWidth *= MyWindowScale;
+		DestHeight *= MyWindowScale;
+	}
+#endif
+
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		XDest += hOffset;
+		YDest += vOffset;
+	}
+#endif
+
+#endif /* 2 == SDL_MAJOR_VERSION */
+
+	top2 = top;
+	left2 = left;
+	bottom2 = bottom;
+	right2 = right;
+
+#if EnableMagnify && ! UseSDLscaling
 	if (UseMagnify) {
 		top2 *= MyWindowScale;
 		left2 *= MyWindowScale;
@@ -597,18 +925,27 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 	}
 #endif
 
+#if 1 == SDL_MAJOR_VERSION
 	if (SDL_MUSTLOCK(my_surface)) {
 		if (SDL_LockSurface(my_surface) < 0) {
 			return;
 		}
 	}
+	pixels = my_surface->pixels;
+	pitch = my_surface->pitch;
+
+#elif 2 == SDL_MAJOR_VERSION
+	if (0 != SDL_LockTexture(my_texture, NULL, &pixels, &pitch)) {
+		return;
+	}
+#endif
 
 	{
 
-	int bpp = my_surface->format->BytesPerPixel;
+	int bpp = my_format->BytesPerPixel;
 	ui5r ExpectedPitch = vMacScreenWidth * bpp;
 
-#if EnableMagnify
+#if EnableMagnify && ! UseSDLscaling
 	if (UseMagnify) {
 		ExpectedPitch *= MyWindowScale;
 	}
@@ -618,7 +955,7 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 	if (UseColorMode) {
 #if vMacScreenDepth < 4
 		for (i = 0; i < CLUT_size; ++i) {
-			CLUT_pixel[i] = SDL_MapRGB(my_surface->format,
+			CLUT_pixel[i] = SDL_MapRGB(my_format,
 				CLUT_reds[i] >> 8,
 				CLUT_greens[i] >> 8,
 				CLUT_blues[i] >> 8);
@@ -627,14 +964,14 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 	} else
 #endif
 	{
-		BWLUT_pixel[1] = SDL_MapRGB(my_surface->format, 0, 0, 0);
+		BWLUT_pixel[1] = SDL_MapRGB(my_format, 0, 0, 0);
 			/* black */
-		BWLUT_pixel[0] = SDL_MapRGB(my_surface->format, 255, 255, 255);
+		BWLUT_pixel[0] = SDL_MapRGB(my_format, 255, 255, 255);
 			/* white */
 	}
 
 	if ((0 == ((bpp - 1) & bpp)) /* a power of 2 */
-		&& (my_surface->pitch == ExpectedPitch)
+		&& (pitch == ExpectedPitch)
 #if (vMacScreenDepth > 3)
 		&& ! UseColorMode
 #endif
@@ -642,7 +979,7 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 	{
 		int k;
 		Uint32 v;
-#if EnableMagnify
+#if EnableMagnify && ! UseSDLscaling
 		int a;
 #endif
 		int PixPerByte =
@@ -671,7 +1008,7 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 					v = BWLUT_pixel[(i >> k) & 1];
 				}
 
-#if EnableMagnify
+#if EnableMagnify && ! UseSDLscaling
 				for (a = UseMagnify ? MyWindowScale : 1; --a >= 0; )
 #endif
 				{
@@ -692,11 +1029,11 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 			}
 		}
 
-		ScalingBuff = (ui3p)my_surface->pixels;
+		ScalingBuff = (ui3p)pixels;
 
 #if (0 != vMacScreenDepth) && (vMacScreenDepth < 4)
 		if (UseColorMode) {
-#if EnableMagnify
+#if EnableMagnify && ! UseSDLscaling
 			if (UseMagnify) {
 				switch (bpp) {
 					case 1:
@@ -730,7 +1067,7 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 		} else
 #endif
 		{
-#if EnableMagnify
+#if EnableMagnify && ! UseSDLscaling
 			if (UseMagnify) {
 				switch (bpp) {
 					case 1:
@@ -772,10 +1109,10 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 			for (j = left2; j < right2; ++j) {
 				int i0 = i;
 				int j0 = j;
-				Uint8 *bufp = (Uint8 *)my_surface->pixels
-					+ i * my_surface->pitch + j * bpp;
+				Uint8 *bufp = (Uint8 *)pixels
+					+ i * pitch + j * bpp;
 
-#if EnableMagnify
+#if EnableMagnify && ! UseSDLscaling
 				if (UseMagnify) {
 					i0 /= MyWindowScale;
 					j0 /= MyWindowScale;
@@ -798,7 +1135,7 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 					p = the_data + ((i0 * vMacScreenWidth + j0) << 1);
 					{
 						ui4r t0 = do_get_mem_word(p);
-						pixel = SDL_MapRGB(my_surface->format,
+						pixel = SDL_MapRGB(my_format,
 							((t0 & 0x7C00) >> 7)
 								| ((t0 & 0x7000) >> 12),
 							((t0 & 0x03E0) >> 2)
@@ -808,7 +1145,7 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 					}
 #elif 5 == vMacScreenDepth
 					p = the_data + ((i0 * vMacScreenWidth + j0) << 2);
-					pixel = SDL_MapRGB(my_surface->format,
+					pixel = SDL_MapRGB(my_format,
 						p[1],
 						p[2],
 						p[3]);
@@ -849,12 +1186,36 @@ LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 
 	}
 
+#if 1 == SDL_MAJOR_VERSION
 	if (SDL_MUSTLOCK(my_surface)) {
 		SDL_UnlockSurface(my_surface);
 	}
 
 	SDL_UpdateRect(my_surface, left2, top2,
 		right2 - left2, bottom2 - top2);
+#elif 2 == SDL_MAJOR_VERSION
+	SDL_UnlockTexture(my_texture);
+
+	src_rect.x = left2;
+	src_rect.y = top2;
+	src_rect.w = right2 - left2;
+	src_rect.h = bottom2 - top2;
+
+	dst_rect.x = XDest;
+	dst_rect.y = YDest;
+	dst_rect.w = DestWidth;
+	dst_rect.h = DestHeight;
+
+	/* SDL_RenderClear(my_renderer); */
+	SDL_RenderCopy(my_renderer, my_texture, &src_rect, &dst_rect);
+	SDL_RenderPresent(my_renderer);
+
+#if MayFullScreen
+label_exit:
+	;
+#endif
+#endif /* 2 == SDL_MAJOR_VERSION */
+#endif /* 0 != SDL_MAJOR_VERSION */
 }
 
 LOCALPROC MyDrawChangesAndClear(void)
@@ -862,7 +1223,10 @@ LOCALPROC MyDrawChangesAndClear(void)
 	if (ScreenChangedBottom > ScreenChangedTop) {
 		HaveChangedScreenBuff(ScreenChangedTop, ScreenChangedLeft,
 			ScreenChangedBottom, ScreenChangedRight);
+#if defined(EMSCRIPTEN) //&& (2 == SDL_MAJOR_VERSION)
+#else
 		ScreenClearChanges();
+#endif
 	}
 }
 
@@ -887,14 +1251,58 @@ LOCALPROC ForceShowCursor(void)
 {
 	if (HaveCursorHidden) {
 		HaveCursorHidden = falseblnr;
+#if 0 != SDL_MAJOR_VERSION
 		(void) SDL_ShowCursor(SDL_ENABLE);
+#endif /* 0 != SDL_MAJOR_VERSION */
 	}
 }
 
 /* cursor moving */
 
+/*
+	OSGLUxxx common:
+	When "EnableFSMouseMotion" the platform
+	specific code can get relative mouse
+	motion, instead of absolute coordinates
+	on the emulated screen. It should
+	set HaveMouseMotion to true when
+	it is doing this (normally when in
+	full screen mode.)
+
+	This can usually be implemented by
+	hiding the platform specific cursor,
+	and then keeping it within a box,
+	moving the cursor back to the center whenever
+	it leaves the box. This requires the
+	ability to move the cursor (in MyMoveMouse).
+*/
+
+#ifndef HaveWorkingWarp
+#define HaveWorkingWarp 1
+#endif
+
+#if EnableMoveMouse && HaveWorkingWarp
 LOCALFUNC blnr MyMoveMouse(si4b h, si4b v)
 {
+	/*
+		OSGLUxxx common:
+		Move the cursor to the point h, v on the emulated screen.
+		If detect that this fails return falseblnr,
+			otherwise return trueblnr.
+		(On some platforms it is possible to move the curser,
+			but there is no way to detect failure.)
+	*/
+
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		h -= ViewHStart;
+		v -= ViewVStart;
+	}
+#endif
+
 #if EnableMagnify
 	if (UseMagnify) {
 		h *= MyWindowScale;
@@ -902,10 +1310,27 @@ LOCALFUNC blnr MyMoveMouse(si4b h, si4b v)
 	}
 #endif
 
+#if 2 == SDL_MAJOR_VERSION
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		h += hOffset;
+		v += vOffset;
+	}
+#endif
+#endif /* 2 == SDL_MAJOR_VERSION */
+
+#if 1 == SDL_MAJOR_VERSION
 	SDL_WarpMouse(h, v);
+#elif 2 == SDL_MAJOR_VERSION
+	SDL_WarpMouseInWindow(my_main_wind, h, v);
+#endif
 
 	return trueblnr;
 }
+#endif
 
 /* cursor state */
 
@@ -913,10 +1338,32 @@ LOCALPROC MousePositionNotify(int NewMousePosh, int NewMousePosv)
 {
 	blnr ShouldHaveCursorHidden = trueblnr;
 
+#if 2 == SDL_MAJOR_VERSION
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		NewMousePosh -= hOffset;
+		NewMousePosv -= vOffset;
+	}
+#endif
+#endif /* 2 == SDL_MAJOR_VERSION */
+
 #if EnableMagnify
 	if (UseMagnify) {
 		NewMousePosh /= MyWindowScale;
 		NewMousePosv /= MyWindowScale;
+	}
+#endif
+
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		NewMousePosh += ViewHStart;
+		NewMousePosv += ViewVStart;
 	}
 #endif
 
@@ -964,8 +1411,32 @@ LOCALPROC MousePositionNotify(int NewMousePosh, int NewMousePosv)
 	WantCursorHidden = ShouldHaveCursorHidden;
 }
 
+#if EnableFSMouseMotion && ! HaveWorkingWarp
+LOCALPROC MousePositionNotifyRelative(int deltah, int deltav)
+{
+	blnr ShouldHaveCursorHidden = trueblnr;
+
+#if EnableMagnify
+	if (UseMagnify) {
+		/*
+			This is not really right. If only move one pixel
+			each time, emulated mouse doesn't move at all.
+		*/
+		deltah /= MyWindowScale;
+		deltav /= MyWindowScale;
+	}
+#endif
+
+	MyMousePositionSetDelta(deltah,
+		deltav);
+
+	WantCursorHidden = ShouldHaveCursorHidden;
+}
+#endif
+
 LOCALPROC CheckMouseState(void)
 {
+#if 0 != SDL_MAJOR_VERSION
 	/*
 		this doesn't work as desired, doesn't get mouse movements
 		when outside of our window.
@@ -975,10 +1446,12 @@ LOCALPROC CheckMouseState(void)
 
 	(void) SDL_GetMouseState(&x, &y);
 	MousePositionNotify(x, y);
+#endif /* 0 != SDL_MAJOR_VERSION */
 }
 
 /* --- keyboard input --- */
 
+#if 1 == SDL_MAJOR_VERSION
 LOCALFUNC ui3r SDLKey2MacKeyCode(SDLKey i)
 {
 	ui3r v = MKC_None;
@@ -1112,7 +1585,8 @@ LOCALFUNC ui3r SDLKey2MacKeyCode(SDLKey i)
 		case SDLK_LCTRL: v = MKC_formac_Control; break;
 		case SDLK_RALT: v = MKC_formac_RCommand; break;
 		case SDLK_LALT: v = MKC_formac_Command; break;
-#ifndef EMSCRIPTEN
+#if defined(EMSCRIPTEN) && (1 == SDL_MAJOR_VERSION)
+#else
 		case SDLK_RMETA: v = MKC_formac_RCommand; break;
 		case SDLK_LMETA: v = MKC_formac_Command; break;
 #endif
@@ -1129,7 +1603,8 @@ LOCALFUNC ui3r SDLKey2MacKeyCode(SDLKey i)
 		case SDLK_BREAK: /* ? */ break;
 		case SDLK_MENU: /* ? */ break;
 		case SDLK_POWER: /* ? */ break;
-#ifndef EMSCRIPTEN
+#if defined(EMSCRIPTEN) && (1 == SDL_MAJOR_VERSION)
+#else
 		case SDLK_EURO: /* ? */ break;
 #endif
 		case SDLK_UNDO: /* ? */ break;
@@ -1140,7 +1615,157 @@ LOCALFUNC ui3r SDLKey2MacKeyCode(SDLKey i)
 
 	return v;
 }
+#elif 2 == SDL_MAJOR_VERSION
+LOCALFUNC ui3r SDLScan2MacKeyCode(SDL_Scancode i)
+{
+	ui3r v = MKC_None;
 
+	switch (i) {
+		case SDL_SCANCODE_BACKSPACE: v = MKC_BackSpace; break;
+		case SDL_SCANCODE_TAB: v = MKC_Tab; break;
+		case SDL_SCANCODE_CLEAR: v = MKC_Clear; break;
+		case SDL_SCANCODE_RETURN: v = MKC_Return; break;
+		case SDL_SCANCODE_PAUSE: v = MKC_Pause; break;
+		case SDL_SCANCODE_ESCAPE: v = MKC_formac_Escape; break;
+		case SDL_SCANCODE_SPACE: v = MKC_Space; break;
+		case SDL_SCANCODE_APOSTROPHE: v = MKC_SingleQuote; break;
+		case SDL_SCANCODE_COMMA: v = MKC_Comma; break;
+		case SDL_SCANCODE_MINUS: v = MKC_Minus; break;
+		case SDL_SCANCODE_PERIOD: v = MKC_Period; break;
+		case SDL_SCANCODE_SLASH: v = MKC_formac_Slash; break;
+		case SDL_SCANCODE_0: v = MKC_0; break;
+		case SDL_SCANCODE_1: v = MKC_1; break;
+		case SDL_SCANCODE_2: v = MKC_2; break;
+		case SDL_SCANCODE_3: v = MKC_3; break;
+		case SDL_SCANCODE_4: v = MKC_4; break;
+		case SDL_SCANCODE_5: v = MKC_5; break;
+		case SDL_SCANCODE_6: v = MKC_6; break;
+		case SDL_SCANCODE_7: v = MKC_7; break;
+		case SDL_SCANCODE_8: v = MKC_8; break;
+		case SDL_SCANCODE_9: v = MKC_9; break;
+		case SDL_SCANCODE_SEMICOLON: v = MKC_SemiColon; break;
+		case SDL_SCANCODE_EQUALS: v = MKC_Equal; break;
+
+		case SDL_SCANCODE_LEFTBRACKET: v = MKC_LeftBracket; break;
+		case SDL_SCANCODE_BACKSLASH: v = MKC_formac_BackSlash; break;
+		case SDL_SCANCODE_RIGHTBRACKET: v = MKC_RightBracket; break;
+		case SDL_SCANCODE_GRAVE: v = MKC_formac_Grave; break;
+
+		case SDL_SCANCODE_A: v = MKC_A; break;
+		case SDL_SCANCODE_B: v = MKC_B; break;
+		case SDL_SCANCODE_C: v = MKC_C; break;
+		case SDL_SCANCODE_D: v = MKC_D; break;
+		case SDL_SCANCODE_E: v = MKC_E; break;
+		case SDL_SCANCODE_F: v = MKC_F; break;
+		case SDL_SCANCODE_G: v = MKC_G; break;
+		case SDL_SCANCODE_H: v = MKC_H; break;
+		case SDL_SCANCODE_I: v = MKC_I; break;
+		case SDL_SCANCODE_J: v = MKC_J; break;
+		case SDL_SCANCODE_K: v = MKC_K; break;
+		case SDL_SCANCODE_L: v = MKC_L; break;
+		case SDL_SCANCODE_M: v = MKC_M; break;
+		case SDL_SCANCODE_N: v = MKC_N; break;
+		case SDL_SCANCODE_O: v = MKC_O; break;
+		case SDL_SCANCODE_P: v = MKC_P; break;
+		case SDL_SCANCODE_Q: v = MKC_Q; break;
+		case SDL_SCANCODE_R: v = MKC_R; break;
+		case SDL_SCANCODE_S: v = MKC_S; break;
+		case SDL_SCANCODE_T: v = MKC_T; break;
+		case SDL_SCANCODE_U: v = MKC_U; break;
+		case SDL_SCANCODE_V: v = MKC_V; break;
+		case SDL_SCANCODE_W: v = MKC_W; break;
+		case SDL_SCANCODE_X: v = MKC_X; break;
+		case SDL_SCANCODE_Y: v = MKC_Y; break;
+		case SDL_SCANCODE_Z: v = MKC_Z; break;
+
+		case SDL_SCANCODE_KP_0: v = MKC_KP0; break;
+		case SDL_SCANCODE_KP_1: v = MKC_KP1; break;
+		case SDL_SCANCODE_KP_2: v = MKC_KP2; break;
+		case SDL_SCANCODE_KP_3: v = MKC_KP3; break;
+		case SDL_SCANCODE_KP_4: v = MKC_KP4; break;
+		case SDL_SCANCODE_KP_5: v = MKC_KP5; break;
+		case SDL_SCANCODE_KP_6: v = MKC_KP6; break;
+		case SDL_SCANCODE_KP_7: v = MKC_KP7; break;
+		case SDL_SCANCODE_KP_8: v = MKC_KP8; break;
+		case SDL_SCANCODE_KP_9: v = MKC_KP9; break;
+
+		case SDL_SCANCODE_KP_PERIOD: v = MKC_Decimal; break;
+		case SDL_SCANCODE_KP_DIVIDE: v = MKC_KPDevide; break;
+		case SDL_SCANCODE_KP_MULTIPLY: v = MKC_KPMultiply; break;
+		case SDL_SCANCODE_KP_MINUS: v = MKC_KPSubtract; break;
+		case SDL_SCANCODE_KP_PLUS: v = MKC_KPAdd; break;
+		case SDL_SCANCODE_KP_ENTER: v = MKC_formac_Enter; break;
+		case SDL_SCANCODE_KP_EQUALS: v = MKC_KPEqual; break;
+
+		case SDL_SCANCODE_UP: v = MKC_Up; break;
+		case SDL_SCANCODE_DOWN: v = MKC_Down; break;
+		case SDL_SCANCODE_RIGHT: v = MKC_Right; break;
+		case SDL_SCANCODE_LEFT: v = MKC_Left; break;
+		case SDL_SCANCODE_INSERT: v = MKC_formac_Help; break;
+		case SDL_SCANCODE_HOME: v = MKC_formac_Home; break;
+		case SDL_SCANCODE_END: v = MKC_formac_End; break;
+		case SDL_SCANCODE_PAGEUP: v = MKC_formac_PageUp; break;
+		case SDL_SCANCODE_PAGEDOWN: v = MKC_formac_PageDown; break;
+
+		case SDL_SCANCODE_F1: v = MKC_formac_F1; break;
+		case SDL_SCANCODE_F2: v = MKC_formac_F2; break;
+		case SDL_SCANCODE_F3: v = MKC_formac_F3; break;
+		case SDL_SCANCODE_F4: v = MKC_formac_F4; break;
+		case SDL_SCANCODE_F5: v = MKC_formac_F5; break;
+		case SDL_SCANCODE_F6: v = MKC_F6; break;
+		case SDL_SCANCODE_F7: v = MKC_F7; break;
+		case SDL_SCANCODE_F8: v = MKC_F8; break;
+		case SDL_SCANCODE_F9: v = MKC_F9; break;
+		case SDL_SCANCODE_F10: v = MKC_F10; break;
+		case SDL_SCANCODE_F11: v = MKC_F11; break;
+		case SDL_SCANCODE_F12: v = MKC_F12; break;
+
+		case SDL_SCANCODE_NUMLOCKCLEAR:
+			v = MKC_formac_ForwardDel; break;
+		case SDL_SCANCODE_CAPSLOCK: v = MKC_formac_CapsLock; break;
+		case SDL_SCANCODE_SCROLLLOCK: v = MKC_ScrollLock; break;
+		case SDL_SCANCODE_RSHIFT: v = MKC_formac_RShift; break;
+		case SDL_SCANCODE_LSHIFT: v = MKC_formac_Shift; break;
+		case SDL_SCANCODE_RCTRL: v = MKC_formac_RControl; break;
+		case SDL_SCANCODE_LCTRL: v = MKC_formac_Control; break;
+		case SDL_SCANCODE_RALT: v = MKC_formac_ROption; break;
+		case SDL_SCANCODE_LALT: v = MKC_formac_Option; break;
+		case SDL_SCANCODE_RGUI: v = MKC_formac_RCommand; break;
+		case SDL_SCANCODE_LGUI: v = MKC_formac_Command; break;
+		/* case SDLK_LSUPER: v = MKC_formac_Option; break; */
+		/* case SDLK_RSUPER: v = MKC_formac_ROption; break; */
+
+		case SDL_SCANCODE_HELP: v = MKC_formac_Help; break;
+		case SDL_SCANCODE_PRINTSCREEN: v = MKC_Print; break;
+
+		case SDL_SCANCODE_UNDO: v = MKC_formac_F1; break;
+		case SDL_SCANCODE_CUT: v = MKC_formac_F2; break;
+		case SDL_SCANCODE_COPY: v = MKC_formac_F3; break;
+		case SDL_SCANCODE_PASTE: v = MKC_formac_F4; break;
+
+		case SDL_SCANCODE_AC_HOME: v = MKC_formac_Home; break;
+
+		case SDL_SCANCODE_KP_A: v = MKC_A; break;
+		case SDL_SCANCODE_KP_B: v = MKC_B; break;
+		case SDL_SCANCODE_KP_C: v = MKC_C; break;
+		case SDL_SCANCODE_KP_D: v = MKC_D; break;
+		case SDL_SCANCODE_KP_E: v = MKC_E; break;
+		case SDL_SCANCODE_KP_F: v = MKC_F; break;
+
+		case SDL_SCANCODE_KP_BACKSPACE: v = MKC_BackSpace; break;
+		case SDL_SCANCODE_KP_CLEAR: v = MKC_Clear; break;
+		case SDL_SCANCODE_KP_COMMA: v = MKC_Comma; break;
+		case SDL_SCANCODE_KP_DECIMAL: v = MKC_Decimal; break;
+
+		default:
+			break;
+	}
+
+	return v;
+}
+#endif /* SDL_MAJOR_VERSION */
+
+#if 1 == SDL_MAJOR_VERSION
 LOCALPROC DoKeyCode(SDL_keysym *r, blnr down)
 {
 	ui3r v = SDLKey2MacKeyCode(r->sym);
@@ -1148,13 +1773,30 @@ LOCALPROC DoKeyCode(SDL_keysym *r, blnr down)
 		Keyboard_UpdateKeyMap2(v, down);
 	}
 }
+#elif 2 == SDL_MAJOR_VERSION
+LOCALPROC DoKeyCode(SDL_Keysym *r, blnr down)
+{
+	ui3r v = SDLScan2MacKeyCode(r->scancode);
+	if (MKC_None != v) {
+		Keyboard_UpdateKeyMap2(v, down);
+	}
+}
+#endif /* SDL_MAJOR_VERSION */
 
 LOCALPROC DisableKeyRepeat(void)
 {
+	/*
+		OSGLUxxx common:
+		If possible and useful, disable keyboard autorepeat.
+	*/
 }
 
 LOCALPROC RestoreKeyRepeat(void)
 {
+	/*
+		OSGLUxxx common:
+		Undo any effects of DisableKeyRepeat.
+	*/
 }
 
 LOCALPROC ReconnectKeyCodes3(void)
@@ -1172,6 +1814,25 @@ LOCALPROC DisconnectKeyCodes3(void)
 #define dbglog_TimeStuff (0 && dbglog_HAVE)
 
 LOCALVAR ui5b TrueEmulatedTime = 0;
+	/*
+		OSGLUxxx common:
+		The amount of time the program has
+		been running, measured in Macintosh
+		"ticks". There are 60.14742 ticks per
+		second.
+
+		(time when the emulation is
+		stopped for more than a few ticks
+		should not be counted.)
+	*/
+
+#if 0 == SDL_MAJOR_VERSION
+#define HaveWorkingTime 0
+#else
+#define HaveWorkingTime 1
+#endif
+
+#if 0 != SDL_MAJOR_VERSION
 
 #define MyInvTimeDivPow 16
 #define MyInvTimeDiv (1 << MyInvTimeDivPow)
@@ -1183,24 +1844,37 @@ LOCALVAR Uint32 LastTime;
 LOCALVAR Uint32 NextIntTime;
 LOCALVAR ui5b NextFracTime;
 
+#endif /* 0 != SDL_MAJOR_VERSION */
+
 LOCALPROC IncrNextTime(void)
 {
+#if 0 != SDL_MAJOR_VERSION
 	NextFracTime += MyInvTimeStep;
 	NextIntTime += (NextFracTime >> MyInvTimeDivPow);
 	NextFracTime &= MyInvTimeDivMask;
+#endif /* 0 != SDL_MAJOR_VERSION */
 }
 
 LOCALPROC InitNextTime(void)
 {
+#if 0 != SDL_MAJOR_VERSION
 	NextIntTime = LastTime;
 	NextFracTime = 0;
 	IncrNextTime();
+#endif /* 0 != SDL_MAJOR_VERSION */
 }
 
 LOCALVAR ui5b NewMacDateInSeconds;
 
 LOCALFUNC blnr UpdateTrueEmulatedTime(void)
 {
+	/*
+		OSGLUxxx common:
+		Update TrueEmulatedTime. Needs to convert between how the host
+		operating system measures time and Macintosh ticks.
+	*/
+
+#if 0 != SDL_MAJOR_VERSION
 	Uint32 LatestTime;
 	si5b TimeDiff;
 
@@ -1241,12 +1915,24 @@ LOCALFUNC blnr UpdateTrueEmulatedTime(void)
 			}
 		}
 	}
+#endif /* 0 != SDL_MAJOR_VERSION */
+
 	return falseblnr;
 }
 
 
 LOCALFUNC blnr CheckDateTime(void)
 {
+	/*
+		OSGLUxxx common:
+		Update CurMacDateInSeconds, the number
+		of seconds since midnight January 1, 1904.
+
+		return true if CurMacDateInSeconds is
+		different than it was on the last
+		call to CheckDateTime.
+	*/
+
 	if (CurMacDateInSeconds != NewMacDateInSeconds) {
 		CurMacDateInSeconds = NewMacDateInSeconds;
 		return trueblnr;
@@ -1257,16 +1943,33 @@ LOCALFUNC blnr CheckDateTime(void)
 
 LOCALPROC StartUpTimeAdjust(void)
 {
+	/*
+		OSGLUxxx common:
+		prepare to call UpdateTrueEmulatedTime.
+
+		will be called again when haven't been
+		regularly calling UpdateTrueEmulatedTime,
+		(such as the emulation has been stopped).
+	*/
+
+#if 0 != SDL_MAJOR_VERSION
 	LastTime = SDL_GetTicks();
+#endif
 	InitNextTime();
 }
 
 LOCALFUNC blnr InitLocationDat(void)
 {
+#if dbglog_OSGInit
+	dbglog_writeln("enter InitLocationDat");
+#endif
+
+#if 0 != SDL_MAJOR_VERSION
 	LastTime = SDL_GetTicks();
 	InitNextTime();
 	NewMacDateInSeconds = LastTime / 1000;
 	CurMacDateInSeconds = NewMacDateInSeconds;
+#endif
 
 	return trueblnr;
 }
@@ -1500,6 +2203,7 @@ struct MySoundR {
 };
 typedef struct MySoundR MySoundR;
 
+#if 0 != SDL_MAJOR_VERSION
 static void my_audio_callback(void *udata, Uint8 *stream, int len)
 {
 	ui4b ToPlayLen;
@@ -1605,6 +2309,7 @@ label_retry:
 
 	datp->lastv = v1;
 }
+#endif /* 0 != SDL_MAJOR_VERSION */
 
 LOCALVAR MySoundR cur_audio;
 
@@ -1644,16 +2349,20 @@ label_retry:
 			dbglog_writeln("busy, so sleep");
 #endif
 
+#if 0 != SDL_MAJOR_VERSION
 #ifndef EMSCRIPTEN
 			(void) SDL_Delay(10);
 #else
 			(void) emscripten_sleep_with_yield(10);
 #endif
+#endif
 
 			goto label_retry;
 		}
 
+#if 0 != SDL_MAJOR_VERSION
 		SDL_PauseAudio(1);
+#endif
 	}
 
 #if dbglog_SoundStuff
@@ -1669,14 +2378,18 @@ LOCALPROC MySound_Start(void)
 		cur_audio.HaveStartedPlaying = falseblnr;
 		cur_audio.wantplaying = trueblnr;
 
+#if 0 != SDL_MAJOR_VERSION
 		SDL_PauseAudio(0);
+#endif
 	}
 }
 
 LOCALPROC MySound_UnInit(void)
 {
 	if (HaveSoundOut) {
+#if 0 != SDL_MAJOR_VERSION
 		SDL_CloseAudio();
+#endif
 	}
 }
 
@@ -1684,7 +2397,13 @@ LOCALPROC MySound_UnInit(void)
 
 LOCALFUNC blnr MySound_Init(void)
 {
+#if dbglog_OSGInit
+	dbglog_writeln("enter MySound_Init");
+#endif
+
+#if 0 != SDL_MAJOR_VERSION
 	SDL_AudioSpec desired;
+#endif
 
 	MySound_Init0();
 
@@ -1694,6 +2413,7 @@ LOCALFUNC blnr MySound_Init(void)
 	cur_audio.fMinFilledSoundBuffs = &MinFilledSoundBuffs;
 	cur_audio.wantplaying = falseblnr;
 
+#if 0 != SDL_MAJOR_VERSION
 	desired.freq = SOUND_SAMPLERATE;
 
 #if 3 == kLn2SoundSampSz
@@ -1722,6 +2442,7 @@ LOCALFUNC blnr MySound_Init(void)
 				start early.
 			*/
 	}
+#endif /* 0 != SDL_MAJOR_VERSION */
 
 	return trueblnr; /* keep going, even if no sound */
 }
@@ -1734,18 +2455,31 @@ GLOBALOSGLUPROC MySound_EndWrite(ui4r actL)
 
 LOCALPROC MySound_SecondNotify(void)
 {
+	/*
+		OSGLUxxx common:
+		called once a second.
+		can be used to check if sound output it
+		lagging or gaining, and if so
+		adjust emulated time by a tick.
+	*/
+
 	if (HaveSoundOut) {
 		MySound_SecondNotify0();
 	}
 }
 
-#endif
+#endif /* MySoundEnabled */
 
 /* --- basic dialogs --- */
 
 LOCALPROC CheckSavedMacMsg(void)
 {
-	/* called only on quit, if error saved but not yet reported */
+	/*
+		OSGLUxxx common:
+		This is currently only used in the
+		rare case where there is a message
+		still pending as the program quits.
+	*/
 
 	if (nullpr != SavedBriefMsg) {
 		char briefMsg0[ClStrMaxLength + 1];
@@ -1754,8 +2488,18 @@ LOCALPROC CheckSavedMacMsg(void)
 		NativeStrFromCStr(briefMsg0, SavedBriefMsg);
 		NativeStrFromCStr(longMsg0, SavedLongMsg);
 
-		fprintf(stderr, "%s\n", briefMsg0);
-		fprintf(stderr, "%s\n", longMsg0);
+#if 2 == SDL_MAJOR_VERSION
+		if (0 != SDL_ShowSimpleMessageBox(
+			SDL_MESSAGEBOX_ERROR,
+			SavedBriefMsg,
+			SavedLongMsg,
+			my_main_wind
+			))
+#endif
+		{
+			fprintf(stderr, "%s\n", briefMsg0);
+			fprintf(stderr, "%s\n", longMsg0);
+		}
 
 		SavedBriefMsg = nullpr;
 	}
@@ -1763,20 +2507,1096 @@ LOCALPROC CheckSavedMacMsg(void)
 
 /* --- clipboard --- */
 
+#if IncludeHostTextClipExchange
+LOCALFUNC uimr MacRoman2UniCodeSize(ui3b *s, uimr L)
+{
+	uimr i;
+	ui3r x;
+	uimr n;
+	uimr v = 0;
+
+	for (i = 0; i < L; ++i) {
+		x = *s++;
+		if (x < 128) {
+			n = 1;
+		} else {
+			switch (x) {
+				case 0x80: n = 2; break;
+					/* LATIN CAPITAL LETTER A WITH DIAERESIS */
+				case 0x81: n = 2; break;
+					/* LATIN CAPITAL LETTER A WITH RING ABOVE */
+				case 0x82: n = 2; break;
+					/* LATIN CAPITAL LETTER C WITH CEDILLA */
+				case 0x83: n = 2; break;
+					/* LATIN CAPITAL LETTER E WITH ACUTE */
+				case 0x84: n = 2; break;
+					/* LATIN CAPITAL LETTER N WITH TILDE */
+				case 0x85: n = 2; break;
+					/* LATIN CAPITAL LETTER O WITH DIAERESIS */
+				case 0x86: n = 2; break;
+					/* LATIN CAPITAL LETTER U WITH DIAERESIS */
+				case 0x87: n = 2; break;
+					/* LATIN SMALL LETTER A WITH ACUTE */
+				case 0x88: n = 2; break;
+					/* LATIN SMALL LETTER A WITH GRAVE */
+				case 0x89: n = 2; break;
+					/* LATIN SMALL LETTER A WITH CIRCUMFLEX */
+				case 0x8A: n = 2; break;
+					/* LATIN SMALL LETTER A WITH DIAERESIS */
+				case 0x8B: n = 2; break;
+					/* LATIN SMALL LETTER A WITH TILDE */
+				case 0x8C: n = 2; break;
+					/* LATIN SMALL LETTER A WITH RING ABOVE */
+				case 0x8D: n = 2; break;
+					/* LATIN SMALL LETTER C WITH CEDILLA */
+				case 0x8E: n = 2; break;
+					/* LATIN SMALL LETTER E WITH ACUTE */
+				case 0x8F: n = 2; break;
+					/* LATIN SMALL LETTER E WITH GRAVE */
+				case 0x90: n = 2; break;
+					/* LATIN SMALL LETTER E WITH CIRCUMFLEX */
+				case 0x91: n = 2; break;
+					/* LATIN SMALL LETTER E WITH DIAERESIS */
+				case 0x92: n = 2; break;
+					/* LATIN SMALL LETTER I WITH ACUTE */
+				case 0x93: n = 2; break;
+					/* LATIN SMALL LETTER I WITH GRAVE */
+				case 0x94: n = 2; break;
+					/* LATIN SMALL LETTER I WITH CIRCUMFLEX */
+				case 0x95: n = 2; break;
+					/* LATIN SMALL LETTER I WITH DIAERESIS */
+				case 0x96: n = 2; break;
+					/* LATIN SMALL LETTER N WITH TILDE */
+				case 0x97: n = 2; break;
+					/* LATIN SMALL LETTER O WITH ACUTE */
+				case 0x98: n = 2; break;
+					/* LATIN SMALL LETTER O WITH GRAVE */
+				case 0x99: n = 2; break;
+					/* LATIN SMALL LETTER O WITH CIRCUMFLEX */
+				case 0x9A: n = 2; break;
+					/* LATIN SMALL LETTER O WITH DIAERESIS */
+				case 0x9B: n = 2; break;
+					/* LATIN SMALL LETTER O WITH TILDE */
+				case 0x9C: n = 2; break;
+					/* LATIN SMALL LETTER U WITH ACUTE */
+				case 0x9D: n = 2; break;
+					/* LATIN SMALL LETTER U WITH GRAVE */
+				case 0x9E: n = 2; break;
+					/* LATIN SMALL LETTER U WITH CIRCUMFLEX */
+				case 0x9F: n = 2; break;
+					/* LATIN SMALL LETTER U WITH DIAERESIS */
+				case 0xA0: n = 3; break;
+					/* DAGGER */
+				case 0xA1: n = 2; break;
+					/* DEGREE SIGN */
+				case 0xA2: n = 2; break;
+					/* CENT SIGN */
+				case 0xA3: n = 2; break;
+					/* POUND SIGN */
+				case 0xA4: n = 2; break;
+					/* SECTION SIGN */
+				case 0xA5: n = 3; break;
+					/* BULLET */
+				case 0xA6: n = 2; break;
+					/* PILCROW SIGN */
+				case 0xA7: n = 2; break;
+					/* LATIN SMALL LETTER SHARP S */
+				case 0xA8: n = 2; break;
+					/* REGISTERED SIGN */
+				case 0xA9: n = 2; break;
+					/* COPYRIGHT SIGN */
+				case 0xAA: n = 3; break;
+					/* TRADE MARK SIGN */
+				case 0xAB: n = 2; break;
+					/* ACUTE ACCENT */
+				case 0xAC: n = 2; break;
+					/* DIAERESIS */
+				case 0xAD: n = 3; break;
+					/* NOT EQUAL TO */
+				case 0xAE: n = 2; break;
+					/* LATIN CAPITAL LETTER AE */
+				case 0xAF: n = 2; break;
+					/* LATIN CAPITAL LETTER O WITH STROKE */
+				case 0xB0: n = 3; break;
+					/* INFINITY */
+				case 0xB1: n = 2; break;
+					/* PLUS-MINUS SIGN */
+				case 0xB2: n = 3; break;
+					/* LESS-THAN OR EQUAL TO */
+				case 0xB3: n = 3; break;
+					/* GREATER-THAN OR EQUAL TO */
+				case 0xB4: n = 2; break;
+					/* YEN SIGN */
+				case 0xB5: n = 2; break;
+					/* MICRO SIGN */
+				case 0xB6: n = 3; break;
+					/* PARTIAL DIFFERENTIAL */
+				case 0xB7: n = 3; break;
+					/* N-ARY SUMMATION */
+				case 0xB8: n = 3; break;
+					/* N-ARY PRODUCT */
+				case 0xB9: n = 2; break;
+					/* GREEK SMALL LETTER PI */
+				case 0xBA: n = 3; break;
+					/* INTEGRAL */
+				case 0xBB: n = 2; break;
+					/* FEMININE ORDINAL INDICATOR */
+				case 0xBC: n = 2; break;
+					/* MASCULINE ORDINAL INDICATOR */
+				case 0xBD: n = 2; break;
+					/* GREEK CAPITAL LETTER OMEGA */
+				case 0xBE: n = 2; break;
+					/* LATIN SMALL LETTER AE */
+				case 0xBF: n = 2; break;
+					/* LATIN SMALL LETTER O WITH STROKE */
+				case 0xC0: n = 2; break;
+					/* INVERTED QUESTION MARK */
+				case 0xC1: n = 2; break;
+					/* INVERTED EXCLAMATION MARK */
+				case 0xC2: n = 2; break;
+					/* NOT SIGN */
+				case 0xC3: n = 3; break;
+					/* SQUARE ROOT */
+				case 0xC4: n = 2; break;
+					/* LATIN SMALL LETTER F WITH HOOK */
+				case 0xC5: n = 3; break;
+					/* ALMOST EQUAL TO */
+				case 0xC6: n = 3; break;
+					/* INCREMENT */
+				case 0xC7: n = 2; break;
+					/* LEFT-POINTING DOUBLE ANGLE QUOTATION MARK */
+				case 0xC8: n = 2; break;
+					/* RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK */
+				case 0xC9: n = 3; break;
+					/* HORIZONTAL ELLIPSIS */
+				case 0xCA: n = 2; break;
+					/* NO-BREAK SPACE */
+				case 0xCB: n = 2; break;
+					/* LATIN CAPITAL LETTER A WITH GRAVE */
+				case 0xCC: n = 2; break;
+					/* LATIN CAPITAL LETTER A WITH TILDE */
+				case 0xCD: n = 2; break;
+					/* LATIN CAPITAL LETTER O WITH TILDE */
+				case 0xCE: n = 2; break;
+					/* LATIN CAPITAL LIGATURE OE */
+				case 0xCF: n = 2; break;
+					/* LATIN SMALL LIGATURE OE */
+				case 0xD0: n = 3; break;
+					/* EN DASH */
+				case 0xD1: n = 3; break;
+					/* EM DASH */
+				case 0xD2: n = 3; break;
+					/* LEFT DOUBLE QUOTATION MARK */
+				case 0xD3: n = 3; break;
+					/* RIGHT DOUBLE QUOTATION MARK */
+				case 0xD4: n = 3; break;
+					/* LEFT SINGLE QUOTATION MARK */
+				case 0xD5: n = 3; break;
+					/* RIGHT SINGLE QUOTATION MARK */
+				case 0xD6: n = 2; break;
+					/* DIVISION SIGN */
+				case 0xD7: n = 3; break;
+					/* LOZENGE */
+				case 0xD8: n = 2; break;
+					/* LATIN SMALL LETTER Y WITH DIAERESIS */
+				case 0xD9: n = 2; break;
+					/* LATIN CAPITAL LETTER Y WITH DIAERESIS */
+				case 0xDA: n = 3; break;
+					/* FRACTION SLASH */
+				case 0xDB: n = 3; break;
+					/* EURO SIGN */
+				case 0xDC: n = 3; break;
+					/* SINGLE LEFT-POINTING ANGLE QUOTATION MARK */
+				case 0xDD: n = 3; break;
+					/* SINGLE RIGHT-POINTING ANGLE QUOTATION MARK */
+				case 0xDE: n = 3; break;
+					/* LATIN SMALL LIGATURE FI */
+				case 0xDF: n = 3; break;
+					/* LATIN SMALL LIGATURE FL */
+				case 0xE0: n = 3; break;
+					/* DOUBLE DAGGER */
+				case 0xE1: n = 2; break;
+					/* MIDDLE DOT */
+				case 0xE2: n = 3; break;
+					/* SINGLE LOW-9 QUOTATION MARK */
+				case 0xE3: n = 3; break;
+					/* DOUBLE LOW-9 QUOTATION MARK */
+				case 0xE4: n = 3; break;
+					/* PER MILLE SIGN */
+				case 0xE5: n = 2; break;
+					/* LATIN CAPITAL LETTER A WITH CIRCUMFLEX */
+				case 0xE6: n = 2; break;
+					/* LATIN CAPITAL LETTER E WITH CIRCUMFLEX */
+				case 0xE7: n = 2; break;
+					/* LATIN CAPITAL LETTER A WITH ACUTE */
+				case 0xE8: n = 2; break;
+					/* LATIN CAPITAL LETTER E WITH DIAERESIS */
+				case 0xE9: n = 2; break;
+					/* LATIN CAPITAL LETTER E WITH GRAVE */
+				case 0xEA: n = 2; break;
+					/* LATIN CAPITAL LETTER I WITH ACUTE */
+				case 0xEB: n = 2; break;
+					/* LATIN CAPITAL LETTER I WITH CIRCUMFLEX */
+				case 0xEC: n = 2; break;
+					/* LATIN CAPITAL LETTER I WITH DIAERESIS */
+				case 0xED: n = 2; break;
+					/* LATIN CAPITAL LETTER I WITH GRAVE */
+				case 0xEE: n = 2; break;
+					/* LATIN CAPITAL LETTER O WITH ACUTE */
+				case 0xEF: n = 2; break;
+					/* LATIN CAPITAL LETTER O WITH CIRCUMFLEX */
+				case 0xF0: n = 3; break;
+					/* Apple logo */
+				case 0xF1: n = 2; break;
+					/* LATIN CAPITAL LETTER O WITH GRAVE */
+				case 0xF2: n = 2; break;
+					/* LATIN CAPITAL LETTER U WITH ACUTE */
+				case 0xF3: n = 2; break;
+					/* LATIN CAPITAL LETTER U WITH CIRCUMFLEX */
+				case 0xF4: n = 2; break;
+					/* LATIN CAPITAL LETTER U WITH GRAVE */
+				case 0xF5: n = 2; break;
+					/* LATIN SMALL LETTER DOTLESS I */
+				case 0xF6: n = 2; break;
+					/* MODIFIER LETTER CIRCUMFLEX ACCENT */
+				case 0xF7: n = 2; break;
+					/* SMALL TILDE */
+				case 0xF8: n = 2; break;
+					/* MACRON */
+				case 0xF9: n = 2; break;
+					/* BREVE */
+				case 0xFA: n = 2; break;
+					/* DOT ABOVE */
+				case 0xFB: n = 2; break;
+					/* RING ABOVE */
+				case 0xFC: n = 2; break;
+					/* CEDILLA */
+				case 0xFD: n = 2; break;
+					/* DOUBLE ACUTE ACCENT */
+				case 0xFE: n = 2; break;
+					/* OGONEK */
+				case 0xFF: n = 2; break;
+					/* CARON */
+				default: n = 1; break;
+					/* shouldn't get here */
+			}
+		}
+		v += n;
+	}
+
+	return v;
+}
+#endif
+
+#if IncludeHostTextClipExchange
+LOCALPROC MacRoman2UniCodeData(ui3b *s, uimr L, char *t)
+{
+	uimr i;
+	ui3r x;
+
+	for (i = 0; i < L; ++i) {
+		x = *s++;
+		if (x < 128) {
+			*t++ = x;
+		} else {
+			switch (x) {
+				case 0x80: *t++ = 0xC3; *t++ = 0x84; break;
+					/* LATIN CAPITAL LETTER A WITH DIAERESIS */
+				case 0x81: *t++ = 0xC3; *t++ = 0x85; break;
+					/* LATIN CAPITAL LETTER A WITH RING ABOVE */
+				case 0x82: *t++ = 0xC3; *t++ = 0x87; break;
+					/* LATIN CAPITAL LETTER C WITH CEDILLA */
+				case 0x83: *t++ = 0xC3; *t++ = 0x89; break;
+					/* LATIN CAPITAL LETTER E WITH ACUTE */
+				case 0x84: *t++ = 0xC3; *t++ = 0x91; break;
+					/* LATIN CAPITAL LETTER N WITH TILDE */
+				case 0x85: *t++ = 0xC3; *t++ = 0x96; break;
+					/* LATIN CAPITAL LETTER O WITH DIAERESIS */
+				case 0x86: *t++ = 0xC3; *t++ = 0x9C; break;
+					/* LATIN CAPITAL LETTER U WITH DIAERESIS */
+				case 0x87: *t++ = 0xC3; *t++ = 0xA1; break;
+					/* LATIN SMALL LETTER A WITH ACUTE */
+				case 0x88: *t++ = 0xC3; *t++ = 0xA0; break;
+					/* LATIN SMALL LETTER A WITH GRAVE */
+				case 0x89: *t++ = 0xC3; *t++ = 0xA2; break;
+					/* LATIN SMALL LETTER A WITH CIRCUMFLEX */
+				case 0x8A: *t++ = 0xC3; *t++ = 0xA4; break;
+					/* LATIN SMALL LETTER A WITH DIAERESIS */
+				case 0x8B: *t++ = 0xC3; *t++ = 0xA3; break;
+					/* LATIN SMALL LETTER A WITH TILDE */
+				case 0x8C: *t++ = 0xC3; *t++ = 0xA5; break;
+					/* LATIN SMALL LETTER A WITH RING ABOVE */
+				case 0x8D: *t++ = 0xC3; *t++ = 0xA7; break;
+					/* LATIN SMALL LETTER C WITH CEDILLA */
+				case 0x8E: *t++ = 0xC3; *t++ = 0xA9; break;
+					/* LATIN SMALL LETTER E WITH ACUTE */
+				case 0x8F: *t++ = 0xC3; *t++ = 0xA8; break;
+					/* LATIN SMALL LETTER E WITH GRAVE */
+				case 0x90: *t++ = 0xC3; *t++ = 0xAA; break;
+					/* LATIN SMALL LETTER E WITH CIRCUMFLEX */
+				case 0x91: *t++ = 0xC3; *t++ = 0xAB; break;
+					/* LATIN SMALL LETTER E WITH DIAERESIS */
+				case 0x92: *t++ = 0xC3; *t++ = 0xAD; break;
+					/* LATIN SMALL LETTER I WITH ACUTE */
+				case 0x93: *t++ = 0xC3; *t++ = 0xAC; break;
+					/* LATIN SMALL LETTER I WITH GRAVE */
+				case 0x94: *t++ = 0xC3; *t++ = 0xAE; break;
+					/* LATIN SMALL LETTER I WITH CIRCUMFLEX */
+				case 0x95: *t++ = 0xC3; *t++ = 0xAF; break;
+					/* LATIN SMALL LETTER I WITH DIAERESIS */
+				case 0x96: *t++ = 0xC3; *t++ = 0xB1; break;
+					/* LATIN SMALL LETTER N WITH TILDE */
+				case 0x97: *t++ = 0xC3; *t++ = 0xB3; break;
+					/* LATIN SMALL LETTER O WITH ACUTE */
+				case 0x98: *t++ = 0xC3; *t++ = 0xB2; break;
+					/* LATIN SMALL LETTER O WITH GRAVE */
+				case 0x99: *t++ = 0xC3; *t++ = 0xB4; break;
+					/* LATIN SMALL LETTER O WITH CIRCUMFLEX */
+				case 0x9A: *t++ = 0xC3; *t++ = 0xB6; break;
+					/* LATIN SMALL LETTER O WITH DIAERESIS */
+				case 0x9B: *t++ = 0xC3; *t++ = 0xB5; break;
+					/* LATIN SMALL LETTER O WITH TILDE */
+				case 0x9C: *t++ = 0xC3; *t++ = 0xBA; break;
+					/* LATIN SMALL LETTER U WITH ACUTE */
+				case 0x9D: *t++ = 0xC3; *t++ = 0xB9; break;
+					/* LATIN SMALL LETTER U WITH GRAVE */
+				case 0x9E: *t++ = 0xC3; *t++ = 0xBB; break;
+					/* LATIN SMALL LETTER U WITH CIRCUMFLEX */
+				case 0x9F: *t++ = 0xC3; *t++ = 0xBC; break;
+					/* LATIN SMALL LETTER U WITH DIAERESIS */
+				case 0xA0: *t++ = 0xE2; *t++ = 0x80; *t++ = 0xA0; break;
+					/* DAGGER */
+				case 0xA1: *t++ = 0xC2; *t++ = 0xB0; break;
+					/* DEGREE SIGN */
+				case 0xA2: *t++ = 0xC2; *t++ = 0xA2; break;
+					/* CENT SIGN */
+				case 0xA3: *t++ = 0xC2; *t++ = 0xA3; break;
+					/* POUND SIGN */
+				case 0xA4: *t++ = 0xC2; *t++ = 0xA7; break;
+					/* SECTION SIGN */
+				case 0xA5: *t++ = 0xE2; *t++ = 0x80; *t++ = 0xA2; break;
+					/* BULLET */
+				case 0xA6: *t++ = 0xC2; *t++ = 0xB6; break;
+					/* PILCROW SIGN */
+				case 0xA7: *t++ = 0xC3; *t++ = 0x9F; break;
+					/* LATIN SMALL LETTER SHARP S */
+				case 0xA8: *t++ = 0xC2; *t++ = 0xAE; break;
+					/* REGISTERED SIGN */
+				case 0xA9: *t++ = 0xC2; *t++ = 0xA9; break;
+					/* COPYRIGHT SIGN */
+				case 0xAA: *t++ = 0xE2; *t++ = 0x84; *t++ = 0xA2; break;
+					/* TRADE MARK SIGN */
+				case 0xAB: *t++ = 0xC2; *t++ = 0xB4; break;
+					/* ACUTE ACCENT */
+				case 0xAC: *t++ = 0xC2; *t++ = 0xA8; break;
+					/* DIAERESIS */
+				case 0xAD: *t++ = 0xE2; *t++ = 0x89; *t++ = 0xA0; break;
+					/* NOT EQUAL TO */
+				case 0xAE: *t++ = 0xC3; *t++ = 0x86; break;
+					/* LATIN CAPITAL LETTER AE */
+				case 0xAF: *t++ = 0xC3; *t++ = 0x98; break;
+					/* LATIN CAPITAL LETTER O WITH STROKE */
+				case 0xB0: *t++ = 0xE2; *t++ = 0x88; *t++ = 0x9E; break;
+					/* INFINITY */
+				case 0xB1: *t++ = 0xC2; *t++ = 0xB1; break;
+					/* PLUS-MINUS SIGN */
+				case 0xB2: *t++ = 0xE2; *t++ = 0x89; *t++ = 0xA4; break;
+					/* LESS-THAN OR EQUAL TO */
+				case 0xB3: *t++ = 0xE2; *t++ = 0x89; *t++ = 0xA5; break;
+					/* GREATER-THAN OR EQUAL TO */
+				case 0xB4: *t++ = 0xC2; *t++ = 0xA5; break;
+					/* YEN SIGN */
+				case 0xB5: *t++ = 0xC2; *t++ = 0xB5; break;
+					/* MICRO SIGN */
+				case 0xB6: *t++ = 0xE2; *t++ = 0x88; *t++ = 0x82; break;
+					/* PARTIAL DIFFERENTIAL */
+				case 0xB7: *t++ = 0xE2; *t++ = 0x88; *t++ = 0x91; break;
+					/* N-ARY SUMMATION */
+				case 0xB8: *t++ = 0xE2; *t++ = 0x88; *t++ = 0x8F; break;
+					/* N-ARY PRODUCT */
+				case 0xB9: *t++ = 0xCF; *t++ = 0x80; break;
+					/* GREEK SMALL LETTER PI */
+				case 0xBA: *t++ = 0xE2; *t++ = 0x88; *t++ = 0xAB; break;
+					/* INTEGRAL */
+				case 0xBB: *t++ = 0xC2; *t++ = 0xAA; break;
+					/* FEMININE ORDINAL INDICATOR */
+				case 0xBC: *t++ = 0xC2; *t++ = 0xBA; break;
+					/* MASCULINE ORDINAL INDICATOR */
+				case 0xBD: *t++ = 0xCE; *t++ = 0xA9; break;
+					/* GREEK CAPITAL LETTER OMEGA */
+				case 0xBE: *t++ = 0xC3; *t++ = 0xA6; break;
+					/* LATIN SMALL LETTER AE */
+				case 0xBF: *t++ = 0xC3; *t++ = 0xB8; break;
+					/* LATIN SMALL LETTER O WITH STROKE */
+				case 0xC0: *t++ = 0xC2; *t++ = 0xBF; break;
+					/* INVERTED QUESTION MARK */
+				case 0xC1: *t++ = 0xC2; *t++ = 0xA1; break;
+					/* INVERTED EXCLAMATION MARK */
+				case 0xC2: *t++ = 0xC2; *t++ = 0xAC; break;
+					/* NOT SIGN */
+				case 0xC3: *t++ = 0xE2; *t++ = 0x88; *t++ = 0x9A; break;
+					/* SQUARE ROOT */
+				case 0xC4: *t++ = 0xC6; *t++ = 0x92; break;
+					/* LATIN SMALL LETTER F WITH HOOK */
+				case 0xC5: *t++ = 0xE2; *t++ = 0x89; *t++ = 0x88; break;
+					/* ALMOST EQUAL TO */
+				case 0xC6: *t++ = 0xE2; *t++ = 0x88; *t++ = 0x86; break;
+					/* INCREMENT */
+				case 0xC7: *t++ = 0xC2; *t++ = 0xAB; break;
+					/* LEFT-POINTING DOUBLE ANGLE QUOTATION MARK */
+				case 0xC8: *t++ = 0xC2; *t++ = 0xBB; break;
+					/* RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK */
+				case 0xC9: *t++ = 0xE2; *t++ = 0x80; *t++ = 0xA6; break;
+					/* HORIZONTAL ELLIPSIS */
+				case 0xCA: *t++ = 0xC2; *t++ = 0xA0; break;
+					/* NO-BREAK SPACE */
+				case 0xCB: *t++ = 0xC3; *t++ = 0x80; break;
+					/* LATIN CAPITAL LETTER A WITH GRAVE */
+				case 0xCC: *t++ = 0xC3; *t++ = 0x83; break;
+					/* LATIN CAPITAL LETTER A WITH TILDE */
+				case 0xCD: *t++ = 0xC3; *t++ = 0x95; break;
+					/* LATIN CAPITAL LETTER O WITH TILDE */
+				case 0xCE: *t++ = 0xC5; *t++ = 0x92; break;
+					/* LATIN CAPITAL LIGATURE OE */
+				case 0xCF: *t++ = 0xC5; *t++ = 0x93; break;
+					/* LATIN SMALL LIGATURE OE */
+				case 0xD0: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x93; break;
+					/* EN DASH */
+				case 0xD1: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x94; break;
+					/* EM DASH */
+				case 0xD2: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x9C; break;
+					/* LEFT DOUBLE QUOTATION MARK */
+				case 0xD3: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x9D; break;
+					/* RIGHT DOUBLE QUOTATION MARK */
+				case 0xD4: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x98; break;
+					/* LEFT SINGLE QUOTATION MARK */
+				case 0xD5: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x99; break;
+					/* RIGHT SINGLE QUOTATION MARK */
+				case 0xD6: *t++ = 0xC3; *t++ = 0xB7; break;
+					/* DIVISION SIGN */
+				case 0xD7: *t++ = 0xE2; *t++ = 0x97; *t++ = 0x8A; break;
+					/* LOZENGE */
+				case 0xD8: *t++ = 0xC3; *t++ = 0xBF; break;
+					/* LATIN SMALL LETTER Y WITH DIAERESIS */
+				case 0xD9: *t++ = 0xC5; *t++ = 0xB8; break;
+					/* LATIN CAPITAL LETTER Y WITH DIAERESIS */
+				case 0xDA: *t++ = 0xE2; *t++ = 0x81; *t++ = 0x84; break;
+					/* FRACTION SLASH */
+				case 0xDB: *t++ = 0xE2; *t++ = 0x82; *t++ = 0xAC; break;
+					/* EURO SIGN */
+				case 0xDC: *t++ = 0xE2; *t++ = 0x80; *t++ = 0xB9; break;
+					/* SINGLE LEFT-POINTING ANGLE QUOTATION MARK */
+				case 0xDD: *t++ = 0xE2; *t++ = 0x80; *t++ = 0xBA; break;
+					/* SINGLE RIGHT-POINTING ANGLE QUOTATION MARK */
+				case 0xDE: *t++ = 0xEF; *t++ = 0xAC; *t++ = 0x81; break;
+					/* LATIN SMALL LIGATURE FI */
+				case 0xDF: *t++ = 0xEF; *t++ = 0xAC; *t++ = 0x82; break;
+					/* LATIN SMALL LIGATURE FL */
+				case 0xE0: *t++ = 0xE2; *t++ = 0x80; *t++ = 0xA1; break;
+					/* DOUBLE DAGGER */
+				case 0xE1: *t++ = 0xC2; *t++ = 0xB7; break;
+					/* MIDDLE DOT */
+				case 0xE2: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x9A; break;
+					/* SINGLE LOW-9 QUOTATION MARK */
+				case 0xE3: *t++ = 0xE2; *t++ = 0x80; *t++ = 0x9E; break;
+					/* DOUBLE LOW-9 QUOTATION MARK */
+				case 0xE4: *t++ = 0xE2; *t++ = 0x80; *t++ = 0xB0; break;
+					/* PER MILLE SIGN */
+				case 0xE5: *t++ = 0xC3; *t++ = 0x82; break;
+					/* LATIN CAPITAL LETTER A WITH CIRCUMFLEX */
+				case 0xE6: *t++ = 0xC3; *t++ = 0x8A; break;
+					/* LATIN CAPITAL LETTER E WITH CIRCUMFLEX */
+				case 0xE7: *t++ = 0xC3; *t++ = 0x81; break;
+					/* LATIN CAPITAL LETTER A WITH ACUTE */
+				case 0xE8: *t++ = 0xC3; *t++ = 0x8B; break;
+					/* LATIN CAPITAL LETTER E WITH DIAERESIS */
+				case 0xE9: *t++ = 0xC3; *t++ = 0x88; break;
+					/* LATIN CAPITAL LETTER E WITH GRAVE */
+				case 0xEA: *t++ = 0xC3; *t++ = 0x8D; break;
+					/* LATIN CAPITAL LETTER I WITH ACUTE */
+				case 0xEB: *t++ = 0xC3; *t++ = 0x8E; break;
+					/* LATIN CAPITAL LETTER I WITH CIRCUMFLEX */
+				case 0xEC: *t++ = 0xC3; *t++ = 0x8F; break;
+					/* LATIN CAPITAL LETTER I WITH DIAERESIS */
+				case 0xED: *t++ = 0xC3; *t++ = 0x8C; break;
+					/* LATIN CAPITAL LETTER I WITH GRAVE */
+				case 0xEE: *t++ = 0xC3; *t++ = 0x93; break;
+					/* LATIN CAPITAL LETTER O WITH ACUTE */
+				case 0xEF: *t++ = 0xC3; *t++ = 0x94; break;
+					/* LATIN CAPITAL LETTER O WITH CIRCUMFLEX */
+				case 0xF0: *t++ = 0xEF; *t++ = 0xA3; *t++ = 0xBF; break;
+					/* Apple logo */
+				case 0xF1: *t++ = 0xC3; *t++ = 0x92; break;
+					/* LATIN CAPITAL LETTER O WITH GRAVE */
+				case 0xF2: *t++ = 0xC3; *t++ = 0x9A; break;
+					/* LATIN CAPITAL LETTER U WITH ACUTE */
+				case 0xF3: *t++ = 0xC3; *t++ = 0x9B; break;
+					/* LATIN CAPITAL LETTER U WITH CIRCUMFLEX */
+				case 0xF4: *t++ = 0xC3; *t++ = 0x99; break;
+					/* LATIN CAPITAL LETTER U WITH GRAVE */
+				case 0xF5: *t++ = 0xC4; *t++ = 0xB1; break;
+					/* LATIN SMALL LETTER DOTLESS I */
+				case 0xF6: *t++ = 0xCB; *t++ = 0x86; break;
+					/* MODIFIER LETTER CIRCUMFLEX ACCENT */
+				case 0xF7: *t++ = 0xCB; *t++ = 0x9C; break;
+					/* SMALL TILDE */
+				case 0xF8: *t++ = 0xC2; *t++ = 0xAF; break;
+					/* MACRON */
+				case 0xF9: *t++ = 0xCB; *t++ = 0x98; break;
+					/* BREVE */
+				case 0xFA: *t++ = 0xCB; *t++ = 0x99; break;
+					/* DOT ABOVE */
+				case 0xFB: *t++ = 0xCB; *t++ = 0x9A; break;
+					/* RING ABOVE */
+				case 0xFC: *t++ = 0xC2; *t++ = 0xB8; break;
+					/* CEDILLA */
+				case 0xFD: *t++ = 0xCB; *t++ = 0x9D; break;
+					/* DOUBLE ACUTE ACCENT */
+				case 0xFE: *t++ = 0xCB; *t++ = 0x9B; break;
+					/* OGONEK */
+				case 0xFF: *t++ = 0xCB; *t++ = 0x87; break;
+					/* CARON */
+				default: *t++ = '?'; break;
+					/* shouldn't get here */
+			}
+		}
+	}
+}
+#endif
+
+#if IncludeHostTextClipExchange
+GLOBALOSGLUFUNC tMacErr HTCEexport(tPbuf i)
+{
+	/*
+		OSGLUxxx common:
+		PBuf i is an array of Macintosh
+		style characters. (using the
+		MacRoman character set.)
+
+		Should export this Buffer to the
+		native clipboard, performing character
+		set translation, and eof character translation
+		as needed.
+
+		return 0 if it succeeds, nonzero (a
+		Macintosh style error code, but -1
+		will do) on failure.
+	*/
+	tMacErr err;
+	char *p;
+	ui3p s = PbufDat[i];
+	uimr L = PbufSize[i];
+	uimr sz = MacRoman2UniCodeSize(s, L);
+
+	if (NULL == (p = malloc(sz + 1))) {
+		err = mnvm_miscErr;
+	} else {
+		MacRoman2UniCodeData(s, L, p);
+		p[sz] = 0;
+
+		if (0 != SDL_SetClipboardText(p)) {
+			err = mnvm_miscErr;
+		} else {
+			err = mnvm_noErr;
+		}
+		free(p);
+	}
+
+	return err;
+}
+#endif
+
+#if IncludeHostTextClipExchange
+LOCALFUNC tMacErr UniCodeStrLength(char *s, uimr *r)
+{
+	tMacErr err;
+	ui3r t;
+	ui3r t2;
+	char *p = s;
+	uimr L = 0;
+
+label_retry:
+	if (0 == (t = *p++)) {
+		err = mnvm_noErr;
+		/* done */
+	} else
+	if (0 == (0x80 & t)) {
+		/* One-byte code */
+		L += 1;
+		goto label_retry;
+	} else
+	if (0 == (0x40 & t)) {
+		/* continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (t2 = *p++)) {
+		err = mnvm_miscErr;
+	} else
+	if (0x80 != (0xC0 & t2)) {
+		/* not a continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (0x20 & t)) {
+		/* two bytes */
+		L += 2;
+		goto label_retry;
+	} else
+	if (0 == (t2 = *p++)) {
+		err = mnvm_miscErr;
+	} else
+	if (0x80 != (0xC0 & t2)) {
+		/* not a continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (0x10 & t)) {
+		/* three bytes */
+		L += 3;
+		goto label_retry;
+	} else
+	if (0 == (t2 = *p++)) {
+		err = mnvm_miscErr;
+	} else
+	if (0x80 != (0xC0 & t2)) {
+		/* not a continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (0x08 & t)) {
+		/* four bytes */
+		L += 5;
+		goto label_retry;
+	} else
+	{
+		err = mnvm_miscErr;
+		/* longer code not supported yet */
+	}
+
+	*r = L;
+	return err;
+}
+#endif
+
+#if IncludeHostTextClipExchange
+LOCALFUNC ui3r UniCodePoint2MacRoman(ui5r x)
+{
+/*
+	adapted from
+		http://www.unicode.org/Public/MAPPINGS/VENDORS/APPLE/ROMAN.TXT
+*/
+	ui3r y;
+
+	if (x < 128) {
+		y = x;
+	} else {
+		switch (x) {
+			case 0x00C4: y = 0x80; break;
+				/* LATIN CAPITAL LETTER A WITH DIAERESIS */
+			case 0x00C5: y = 0x81; break;
+				/* LATIN CAPITAL LETTER A WITH RING ABOVE */
+			case 0x00C7: y = 0x82; break;
+				/* LATIN CAPITAL LETTER C WITH CEDILLA */
+			case 0x00C9: y = 0x83; break;
+				/* LATIN CAPITAL LETTER E WITH ACUTE */
+			case 0x00D1: y = 0x84; break;
+				/* LATIN CAPITAL LETTER N WITH TILDE */
+			case 0x00D6: y = 0x85; break;
+				/* LATIN CAPITAL LETTER O WITH DIAERESIS */
+			case 0x00DC: y = 0x86; break;
+				/* LATIN CAPITAL LETTER U WITH DIAERESIS */
+			case 0x00E1: y = 0x87; break;
+				/* LATIN SMALL LETTER A WITH ACUTE */
+			case 0x00E0: y = 0x88; break;
+				/* LATIN SMALL LETTER A WITH GRAVE */
+			case 0x00E2: y = 0x89; break;
+				/* LATIN SMALL LETTER A WITH CIRCUMFLEX */
+			case 0x00E4: y = 0x8A; break;
+				/* LATIN SMALL LETTER A WITH DIAERESIS */
+			case 0x00E3: y = 0x8B; break;
+				/* LATIN SMALL LETTER A WITH TILDE */
+			case 0x00E5: y = 0x8C; break;
+				/* LATIN SMALL LETTER A WITH RING ABOVE */
+			case 0x00E7: y = 0x8D; break;
+				/* LATIN SMALL LETTER C WITH CEDILLA */
+			case 0x00E9: y = 0x8E; break;
+				/* LATIN SMALL LETTER E WITH ACUTE */
+			case 0x00E8: y = 0x8F; break;
+				/* LATIN SMALL LETTER E WITH GRAVE */
+			case 0x00EA: y = 0x90; break;
+				/* LATIN SMALL LETTER E WITH CIRCUMFLEX */
+			case 0x00EB: y = 0x91; break;
+				/* LATIN SMALL LETTER E WITH DIAERESIS */
+			case 0x00ED: y = 0x92; break;
+				/* LATIN SMALL LETTER I WITH ACUTE */
+			case 0x00EC: y = 0x93; break;
+				/* LATIN SMALL LETTER I WITH GRAVE */
+			case 0x00EE: y = 0x94; break;
+				/* LATIN SMALL LETTER I WITH CIRCUMFLEX */
+			case 0x00EF: y = 0x95; break;
+				/* LATIN SMALL LETTER I WITH DIAERESIS */
+			case 0x00F1: y = 0x96; break;
+				/* LATIN SMALL LETTER N WITH TILDE */
+			case 0x00F3: y = 0x97; break;
+				/* LATIN SMALL LETTER O WITH ACUTE */
+			case 0x00F2: y = 0x98; break;
+				/* LATIN SMALL LETTER O WITH GRAVE */
+			case 0x00F4: y = 0x99; break;
+				/* LATIN SMALL LETTER O WITH CIRCUMFLEX */
+			case 0x00F6: y = 0x9A; break;
+				/* LATIN SMALL LETTER O WITH DIAERESIS */
+			case 0x00F5: y = 0x9B; break;
+				/* LATIN SMALL LETTER O WITH TILDE */
+			case 0x00FA: y = 0x9C; break;
+				/* LATIN SMALL LETTER U WITH ACUTE */
+			case 0x00F9: y = 0x9D; break;
+				/* LATIN SMALL LETTER U WITH GRAVE */
+			case 0x00FB: y = 0x9E; break;
+				/* LATIN SMALL LETTER U WITH CIRCUMFLEX */
+			case 0x00FC: y = 0x9F; break;
+				/* LATIN SMALL LETTER U WITH DIAERESIS */
+			case 0x2020: y = 0xA0; break;
+				/* DAGGER */
+			case 0x00B0: y = 0xA1; break;
+				/* DEGREE SIGN */
+			case 0x00A2: y = 0xA2; break;
+				/* CENT SIGN */
+			case 0x00A3: y = 0xA3; break;
+				/* POUND SIGN */
+			case 0x00A7: y = 0xA4; break;
+				/* SECTION SIGN */
+			case 0x2022: y = 0xA5; break;
+				/* BULLET */
+			case 0x00B6: y = 0xA6; break;
+				/* PILCROW SIGN */
+			case 0x00DF: y = 0xA7; break;
+				/* LATIN SMALL LETTER SHARP S */
+			case 0x00AE: y = 0xA8; break;
+				/* REGISTERED SIGN */
+			case 0x00A9: y = 0xA9; break;
+				/* COPYRIGHT SIGN */
+			case 0x2122: y = 0xAA; break;
+				/* TRADE MARK SIGN */
+			case 0x00B4: y = 0xAB; break;
+				/* ACUTE ACCENT */
+			case 0x00A8: y = 0xAC; break;
+				/* DIAERESIS */
+			case 0x2260: y = 0xAD; break;
+				/* NOT EQUAL TO */
+			case 0x00C6: y = 0xAE; break;
+				/* LATIN CAPITAL LETTER AE */
+			case 0x00D8: y = 0xAF; break;
+				/* LATIN CAPITAL LETTER O WITH STROKE */
+			case 0x221E: y = 0xB0; break;
+				/* INFINITY */
+			case 0x00B1: y = 0xB1; break;
+				/* PLUS-MINUS SIGN */
+			case 0x2264: y = 0xB2; break;
+				/* LESS-THAN OR EQUAL TO */
+			case 0x2265: y = 0xB3; break;
+				/* GREATER-THAN OR EQUAL TO */
+			case 0x00A5: y = 0xB4; break;
+				/* YEN SIGN */
+			case 0x00B5: y = 0xB5; break;
+				/* MICRO SIGN */
+			case 0x2202: y = 0xB6; break;
+				/* PARTIAL DIFFERENTIAL */
+			case 0x2211: y = 0xB7; break;
+				/* N-ARY SUMMATION */
+			case 0x220F: y = 0xB8; break;
+				/* N-ARY PRODUCT */
+			case 0x03C0: y = 0xB9; break;
+				/* GREEK SMALL LETTER PI */
+			case 0x222B: y = 0xBA; break;
+				/* INTEGRAL */
+			case 0x00AA: y = 0xBB; break;
+				/* FEMININE ORDINAL INDICATOR */
+			case 0x00BA: y = 0xBC; break;
+				/* MASCULINE ORDINAL INDICATOR */
+			case 0x03A9: y = 0xBD; break;
+				/* GREEK CAPITAL LETTER OMEGA */
+			case 0x00E6: y = 0xBE; break;
+				/* LATIN SMALL LETTER AE */
+			case 0x00F8: y = 0xBF; break;
+				/* LATIN SMALL LETTER O WITH STROKE */
+			case 0x00BF: y = 0xC0; break;
+				/* INVERTED QUESTION MARK */
+			case 0x00A1: y = 0xC1; break;
+				/* INVERTED EXCLAMATION MARK */
+			case 0x00AC: y = 0xC2; break;
+				/* NOT SIGN */
+			case 0x221A: y = 0xC3; break;
+				/* SQUARE ROOT */
+			case 0x0192: y = 0xC4; break;
+				/* LATIN SMALL LETTER F WITH HOOK */
+			case 0x2248: y = 0xC5; break;
+				/* ALMOST EQUAL TO */
+			case 0x2206: y = 0xC6; break;
+				/* INCREMENT */
+			case 0x00AB: y = 0xC7; break;
+				/* LEFT-POINTING DOUBLE ANGLE QUOTATION MARK */
+			case 0x00BB: y = 0xC8; break;
+				/* RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK */
+			case 0x2026: y = 0xC9; break;
+				/* HORIZONTAL ELLIPSIS */
+			case 0x00A0: y = 0xCA; break;
+				/* NO-BREAK SPACE */
+			case 0x00C0: y = 0xCB; break;
+				/* LATIN CAPITAL LETTER A WITH GRAVE */
+			case 0x00C3: y = 0xCC; break;
+				/* LATIN CAPITAL LETTER A WITH TILDE */
+			case 0x00D5: y = 0xCD; break;
+				/* LATIN CAPITAL LETTER O WITH TILDE */
+			case 0x0152: y = 0xCE; break;
+				/* LATIN CAPITAL LIGATURE OE */
+			case 0x0153: y = 0xCF; break;
+				/* LATIN SMALL LIGATURE OE */
+			case 0x2013: y = 0xD0; break;
+				/* EN DASH */
+			case 0x2014: y = 0xD1; break;
+				/* EM DASH */
+			case 0x201C: y = 0xD2; break;
+				/* LEFT DOUBLE QUOTATION MARK */
+			case 0x201D: y = 0xD3; break;
+				/* RIGHT DOUBLE QUOTATION MARK */
+			case 0x2018: y = 0xD4; break;
+				/* LEFT SINGLE QUOTATION MARK */
+			case 0x2019: y = 0xD5; break;
+				/* RIGHT SINGLE QUOTATION MARK */
+			case 0x00F7: y = 0xD6; break;
+				/* DIVISION SIGN */
+			case 0x25CA: y = 0xD7; break;
+				/* LOZENGE */
+			case 0x00FF: y = 0xD8; break;
+				/* LATIN SMALL LETTER Y WITH DIAERESIS */
+			case 0x0178: y = 0xD9; break;
+				/* LATIN CAPITAL LETTER Y WITH DIAERESIS */
+			case 0x2044: y = 0xDA; break;
+				/* FRACTION SLASH */
+			case 0x20AC: y = 0xDB; break;
+				/* EURO SIGN */
+			case 0x2039: y = 0xDC; break;
+				/* SINGLE LEFT-POINTING ANGLE QUOTATION MARK */
+			case 0x203A: y = 0xDD; break;
+				/* SINGLE RIGHT-POINTING ANGLE QUOTATION MARK */
+			case 0xFB01: y = 0xDE; break;
+				/* LATIN SMALL LIGATURE FI */
+			case 0xFB02: y = 0xDF; break;
+				/* LATIN SMALL LIGATURE FL */
+			case 0x2021: y = 0xE0; break;
+				/* DOUBLE DAGGER */
+			case 0x00B7: y = 0xE1; break;
+				/* MIDDLE DOT */
+			case 0x201A: y = 0xE2; break;
+				/* SINGLE LOW-9 QUOTATION MARK */
+			case 0x201E: y = 0xE3; break;
+				/* DOUBLE LOW-9 QUOTATION MARK */
+			case 0x2030: y = 0xE4; break;
+				/* PER MILLE SIGN */
+			case 0x00C2: y = 0xE5; break;
+				/* LATIN CAPITAL LETTER A WITH CIRCUMFLEX */
+			case 0x00CA: y = 0xE6; break;
+				/* LATIN CAPITAL LETTER E WITH CIRCUMFLEX */
+			case 0x00C1: y = 0xE7; break;
+				/* LATIN CAPITAL LETTER A WITH ACUTE */
+			case 0x00CB: y = 0xE8; break;
+				/* LATIN CAPITAL LETTER E WITH DIAERESIS */
+			case 0x00C8: y = 0xE9; break;
+				/* LATIN CAPITAL LETTER E WITH GRAVE */
+			case 0x00CD: y = 0xEA; break;
+				/* LATIN CAPITAL LETTER I WITH ACUTE */
+			case 0x00CE: y = 0xEB; break;
+				/* LATIN CAPITAL LETTER I WITH CIRCUMFLEX */
+			case 0x00CF: y = 0xEC; break;
+				/* LATIN CAPITAL LETTER I WITH DIAERESIS */
+			case 0x00CC: y = 0xED; break;
+				/* LATIN CAPITAL LETTER I WITH GRAVE */
+			case 0x00D3: y = 0xEE; break;
+				/* LATIN CAPITAL LETTER O WITH ACUTE */
+			case 0x00D4: y = 0xEF; break;
+				/* LATIN CAPITAL LETTER O WITH CIRCUMFLEX */
+			case 0xF8FF: y = 0xF0; break;
+				/* Apple logo */
+			case 0x00D2: y = 0xF1; break;
+				/* LATIN CAPITAL LETTER O WITH GRAVE */
+			case 0x00DA: y = 0xF2; break;
+				/* LATIN CAPITAL LETTER U WITH ACUTE */
+			case 0x00DB: y = 0xF3; break;
+				/* LATIN CAPITAL LETTER U WITH CIRCUMFLEX */
+			case 0x00D9: y = 0xF4; break;
+				/* LATIN CAPITAL LETTER U WITH GRAVE */
+			case 0x0131: y = 0xF5; break;
+				/* LATIN SMALL LETTER DOTLESS I */
+			case 0x02C6: y = 0xF6; break;
+				/* MODIFIER LETTER CIRCUMFLEX ACCENT */
+			case 0x02DC: y = 0xF7; break;
+				/* SMALL TILDE */
+			case 0x00AF: y = 0xF8; break;
+				/* MACRON */
+			case 0x02D8: y = 0xF9; break;
+				/* BREVE */
+			case 0x02D9: y = 0xFA; break;
+				/* DOT ABOVE */
+			case 0x02DA: y = 0xFB; break;
+				/* RING ABOVE */
+			case 0x00B8: y = 0xFC; break;
+				/* CEDILLA */
+			case 0x02DD: y = 0xFD; break;
+				/* DOUBLE ACUTE ACCENT */
+			case 0x02DB: y = 0xFE; break;
+				/* OGONEK */
+			case 0x02C7: y = 0xFF; break;
+				/* CARON */
+			default: y = '?'; break;
+				/* unrecognized */
+		}
+	}
+
+	return y;
+}
+#endif
+
+#if IncludeHostTextClipExchange
+LOCALPROC UniCodeStr2MacRoman(char *s, char *r)
+{
+	tMacErr err;
+	ui3r t;
+	ui3r t2;
+	ui3r t3;
+	ui3r t4;
+	ui5r v;
+	char *p = s;
+	char *q = r;
+
+label_retry:
+	if (0 == (t = *p++)) {
+		err = mnvm_noErr;
+		/* done */
+	} else
+	if (0 == (0x80 & t)) {
+		*q++ = t;
+		goto label_retry;
+	} else
+	if (0 == (0x40 & t)) {
+		/* continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (t2 = *p++)) {
+		err = mnvm_miscErr;
+	} else
+	if (0x80 != (0xC0 & t2)) {
+		/* not a continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (0x20 & t)) {
+		/* two bytes */
+		v = t & 0x1F;
+		v = (v << 6) | (t2 & 0x3F);
+		*q++ = UniCodePoint2MacRoman(v);
+		goto label_retry;
+	} else
+	if (0 == (t3 = *p++)) {
+		err = mnvm_miscErr;
+	} else
+	if (0x80 != (0xC0 & t3)) {
+		/* not a continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (0x10 & t)) {
+		/* three bytes */
+		v = t & 0x0F;
+		v = (v << 6) | (t3 & 0x3F);
+		v = (v << 6) | (t2 & 0x3F);
+		*q++ = UniCodePoint2MacRoman(v);
+		goto label_retry;
+	} else
+	if (0 == (t4 = *p++)) {
+		err = mnvm_miscErr;
+	} else
+	if (0x80 != (0xC0 & t4)) {
+		/* not a continuation code, error */
+		err = mnvm_miscErr;
+	} else
+	if (0 == (0x08 & t)) {
+		/* four bytes */
+		v = t & 0x07;
+		v = (v << 6) | (t4 & 0x3F);
+		v = (v << 6) | (t3 & 0x3F);
+		v = (v << 6) | (t2 & 0x3F);
+		*q++ = UniCodePoint2MacRoman(v);
+		goto label_retry;
+	} else
+	{
+		err = mnvm_miscErr;
+		/* longer code not supported yet */
+	}
+}
+#endif
+
+#if IncludeHostTextClipExchange
+GLOBALOSGLUFUNC tMacErr HTCEimport(tPbuf *r)
+{
+	/*
+		OSGLUxxx common:
+		Import the native clipboard as text,
+		and convert it to Macintosh format,
+		in a Pbuf.
+
+		return 0 if it succeeds, nonzero (a
+		Macintosh style error code, but -1
+		will do) on failure.
+	*/
+
+	tMacErr err;
+	uimr L;
+	char *s = NULL;
+	tPbuf t = NotAPbuf;
+
+	if (NULL == (s = SDL_GetClipboardText())) {
+		err = mnvm_miscErr;
+	} else
+	if (mnvm_noErr != (err =
+		UniCodeStrLength(s, &L)))
+	{
+		/* fail */
+	} else
+	if (mnvm_noErr != (err =
+		PbufNew(L, &t)))
+	{
+		/* fail */
+	} else
+	{
+		err = mnvm_noErr;
+
+		UniCodeStr2MacRoman(s, PbufDat[t]);
+		*r = t;
+		t = NotAPbuf;
+	}
+
+	if (NotAPbuf != t) {
+		PbufDispose(t);
+	}
+	if (NULL != s) {
+		SDL_free(s);
+	}
+
+	return err;
+}
+#endif
+
+/* --- event handling for main window --- */
+
 #define UseMotionEvents 1
 
 #if UseMotionEvents
 LOCALVAR blnr CaughtMouse = falseblnr;
 #endif
 
-/* --- event handling for main window --- */
-
+#if 0 != SDL_MAJOR_VERSION
 LOCALPROC HandleTheEvent(SDL_Event *event)
 {
 	switch (event->type) {
 		case SDL_QUIT:
 			RequestMacOff = trueblnr;
 			break;
+#if 1 == SDL_MAJOR_VERSION
 		case SDL_ACTIVEEVENT:
 			switch (event->active.state) {
 				case SDL_APPINPUTFOCUS:
@@ -1792,19 +3612,60 @@ LOCALPROC HandleTheEvent(SDL_Event *event)
 					break;
 			}
 			break;
+#endif /* 1 == SDL_MAJOR_VERSION */
+#if 2 == SDL_MAJOR_VERSION
+		case SDL_WINDOWEVENT:
+			switch (event->window.event) {
+				case SDL_WINDOWEVENT_FOCUS_GAINED:
+					gTrueBackgroundFlag = 0;
+					break;
+				case SDL_WINDOWEVENT_FOCUS_LOST:
+					gTrueBackgroundFlag = 1;
+					break;
+				case SDL_WINDOWEVENT_ENTER:
+					CaughtMouse = 1;
+					break;
+				case SDL_WINDOWEVENT_LEAVE:
+					CaughtMouse = 0;
+					break;
+			}
+			break;
+#endif /* 2 == SDL_MAJOR_VERSION */
 		case SDL_MOUSEMOTION:
-			MousePositionNotify(
-				event->motion.x, event->motion.y);
+#if EnableFSMouseMotion && ! HaveWorkingWarp
+			if (HaveMouseMotion) {
+				MousePositionNotifyRelative(
+					event->motion.xrel, event->motion.yrel);
+			} else
+#endif
+			{
+				MousePositionNotify(
+					event->motion.x, event->motion.y);
+			}
 			break;
 		case SDL_MOUSEBUTTONDOWN:
 			/* any mouse button, we don't care which */
-			MousePositionNotify(
-				event->button.x, event->button.y);
+#if EnableFSMouseMotion && ! HaveWorkingWarp
+			if (HaveMouseMotion) {
+				/* ignore position */
+			} else
+#endif
+			{
+				MousePositionNotify(
+					event->button.x, event->button.y);
+			}
 			MyMouseButtonSet(trueblnr);
 			break;
 		case SDL_MOUSEBUTTONUP:
-			MousePositionNotify(
-				event->button.x, event->button.y);
+#if EnableFSMouseMotion && ! HaveWorkingWarp
+			if (HaveMouseMotion) {
+				/* ignore position */
+			} else
+#endif
+			{
+				MousePositionNotify(
+					event->button.x, event->button.y);
+			}
 			MyMouseButtonSet(falseblnr);
 			break;
 		case SDL_KEYDOWN:
@@ -1813,6 +3674,33 @@ LOCALPROC HandleTheEvent(SDL_Event *event)
 		case SDL_KEYUP:
 			DoKeyCode(&event->key.keysym, falseblnr);
 			break;
+#if 2 == SDL_MAJOR_VERSION
+		case SDL_MOUSEWHEEL:
+			if (event->wheel.x < 0) {
+				Keyboard_UpdateKeyMap2(MKC_Left, trueblnr);
+				Keyboard_UpdateKeyMap2(MKC_Left, falseblnr);
+			} else if (event->wheel.x > 0) {
+				Keyboard_UpdateKeyMap2(MKC_Right, trueblnr);
+				Keyboard_UpdateKeyMap2(MKC_Right, falseblnr);
+			}
+			if (event->wheel.y < 0) {
+				Keyboard_UpdateKeyMap2(MKC_Down, trueblnr);
+				Keyboard_UpdateKeyMap2(MKC_Down, falseblnr);
+			} else if(event->wheel.y > 0) {
+				Keyboard_UpdateKeyMap2(MKC_Up, trueblnr);
+				Keyboard_UpdateKeyMap2(MKC_Up, falseblnr);
+			}
+			break;
+		case SDL_DROPFILE:
+			{
+				char *s = event->drop.file;
+
+				(void) Sony_Insert1a(s, falseblnr);
+				SDL_RaiseWindow(my_main_wind);
+				SDL_free(s);
+			}
+			break;
+#endif /* 2 == SDL_MAJOR_VERSION */
 #if 0
 		case Expose: /* SDL doesn't have an expose event */
 			int x0 = event->expose.x;
@@ -1839,6 +3727,7 @@ LOCALPROC HandleTheEvent(SDL_Event *event)
 #endif
 	}
 }
+#endif
 
 /* --- main window creation and disposal --- */
 
@@ -1849,13 +3738,23 @@ LOCALFUNC blnr Screen_Init(void)
 {
 	blnr v = falseblnr;
 
+#if dbglog_OSGInit
+	dbglog_writeln("enter Screen_Init");
+#endif
+
 	InitKeyCodes();
 
+#if 0 != SDL_MAJOR_VERSION
 	if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0)
 	{
 		fprintf(stderr, "Unable to init SDL: %s\n", SDL_GetError());
-	} else {
-		SDL_WM_SetCaption(kStrAppName, NULL);
+	} else
+#endif
+	{
+#if 1 == SDL_MAJOR_VERSION
+		SDL_WM_SetCaption((NULL != n_arg) ? n_arg : kStrAppName, NULL);
+#endif /* 1 == SDL_MAJOR_VERSION */
+
 		v = trueblnr;
 	}
 
@@ -1870,10 +3769,16 @@ LOCALVAR blnr GrabMachine = falseblnr;
 LOCALPROC GrabTheMachine(void)
 {
 #if GrabKeysFullScreen
+#if 1 == SDL_MAJOR_VERSION
 	(void) SDL_WM_GrabInput(SDL_GRAB_ON);
+#elif 2 == SDL_MAJOR_VERSION
+	SDL_SetWindowGrab(my_main_wind, SDL_TRUE);
+#endif /* SDL_MAJOR_VERSION */
 #endif
 
 #if EnableFSMouseMotion
+
+#if HaveWorkingWarp
 	/*
 		if magnification changes, need to reset,
 		even if HaveMouseMotion already true
@@ -1885,7 +3790,13 @@ LOCALPROC GrabTheMachine(void)
 		SavedMouseV = ViewVStart + (ViewVSize / 2);
 		HaveMouseMotion = trueblnr;
 	}
+#elif 2 == SDL_MAJOR_VERSION
+	if (0 == SDL_SetRelativeMouseMode(SDL_ENABLE)) {
+		HaveMouseMotion = trueblnr;
+	}
 #endif
+
+#endif /* EnableFSMouseMotion */
 }
 #endif
 
@@ -1893,19 +3804,30 @@ LOCALPROC GrabTheMachine(void)
 LOCALPROC UngrabMachine(void)
 {
 #if EnableFSMouseMotion
+
 	if (HaveMouseMotion) {
+#if HaveWorkingWarp
 		(void) MyMoveMouse(CurMouseH, CurMouseV);
-		HaveMouseMotion = falseblnr;
-	}
+#elif 2 == SDL_MAJOR_VERSION
+		SDL_SetRelativeMouseMode(SDL_DISABLE);
 #endif
 
+		HaveMouseMotion = falseblnr;
+	}
+
+#endif /* EnableFSMouseMotion */
+
 #if GrabKeysFullScreen
+#if 1 == SDL_MAJOR_VERSION
 	(void) SDL_WM_GrabInput(SDL_GRAB_OFF);
+#elif 2 == SDL_MAJOR_VERSION
+	SDL_SetWindowGrab(my_main_wind, SDL_FALSE);
+#endif
 #endif
 }
 #endif
 
-#if EnableFSMouseMotion
+#if EnableFSMouseMotion && HaveWorkingWarp
 LOCALPROC MyMouseConstrain(void)
 {
 	si4b shiftdh;
@@ -1934,6 +3856,53 @@ LOCALPROC MyMouseConstrain(void)
 	}
 }
 #endif
+
+
+#if 0 == SDL_MAJOR_VERSION
+
+LOCALFUNC blnr CreateMainWindow(void)
+{
+#if dbglog_OSGInit
+	dbglog_writeln("enter CreateMainWindow");
+#endif
+
+	return trueblnr;
+}
+
+LOCALPROC CloseMainWindow(void)
+{
+}
+
+#if EnableRecreateW
+LOCALFUNC blnr ReCreateMainWindow(void)
+{
+	ForceShowCursor(); /* hide/show cursor api is per window */
+
+#if MayFullScreen
+	if (GrabMachine) {
+		GrabMachine = falseblnr;
+		UngrabMachine();
+	}
+#endif
+
+#if EnableMagnify
+	UseMagnify = WantMagnify;
+#endif
+#if VarFullScreen
+	UseFullScreen = WantFullScreen;
+#endif
+
+	(void) CreateMainWindow();
+
+	if (HaveCursorHidden) {
+		(void) MyMoveMouse(CurMouseH, CurMouseV);
+	}
+
+	return trueblnr;
+}
+#endif
+
+#elif 1 == SDL_MAJOR_VERSION
 
 LOCALFUNC blnr CreateMainWindow(void)
 {
@@ -1983,6 +3952,10 @@ LOCALFUNC blnr CreateMainWindow(void)
 	return v;
 }
 
+LOCALPROC CloseMainWindow(void)
+{
+}
+
 #if EnableRecreateW
 LOCALFUNC blnr ReCreateMainWindow(void)
 {
@@ -2012,14 +3985,503 @@ LOCALFUNC blnr ReCreateMainWindow(void)
 }
 #endif
 
+#elif 2 == SDL_MAJOR_VERSION
+
+enum {
+	kMagStateNormal,
+#if EnableMagnify
+	kMagStateMagnifgy,
+#endif
+	kNumMagStates
+};
+
+#define kMagStateAuto kNumMagStates
+
+#if MayNotFullScreen
+LOCALVAR int CurWinIndx;
+LOCALVAR blnr HavePositionWins[kNumMagStates];
+LOCALVAR int WinPositionsX[kNumMagStates];
+LOCALVAR int WinPositionsY[kNumMagStates];
+#endif
+
+LOCALFUNC blnr CreateMainWindow(void)
+{
+	/*
+		OSGLUxxx common:
+		Set up somewhere for us to draw the emulated screen and
+		receive mouse input. i.e. usually a window, as is the case
+		for this port.
+
+		The window should not be resizeable.
+
+		Should look at the current value of UseMagnify and
+		UseFullScreen.
+	*/
+
+	int NewWindowX;
+	int NewWindowY;
+	int NewWindowHeight = vMacScreenHeight;
+	int NewWindowWidth = vMacScreenWidth;
+	Uint32 flags = 0 /* SDL_WINDOW_HIDDEN */;
+	blnr v = falseblnr;
+
+#if EnableMagnify && 1
+	if (UseMagnify) {
+		NewWindowHeight *= MyWindowScale;
+		NewWindowWidth *= MyWindowScale;
+	}
+#endif
+
+#if VarFullScreen
+	if (UseFullScreen)
+#endif
+#if MayFullScreen
+	{
+		/*
+			We don't want physical screen mode to be changed in modern
+			displays, so we pass this _DESKTOP flag.
+		*/
+		flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+
+		NewWindowX = SDL_WINDOWPOS_UNDEFINED;
+		NewWindowY = SDL_WINDOWPOS_UNDEFINED;
+	}
+#endif
+#if VarFullScreen
+	else
+#endif
+#if MayNotFullScreen
+	{
+		int WinIndx;
+
+#if EnableMagnify
+		if (UseMagnify) {
+			WinIndx = kMagStateMagnifgy;
+		} else
+#endif
+		{
+			WinIndx = kMagStateNormal;
+		}
+
+		if (! HavePositionWins[WinIndx]) {
+			NewWindowX = SDL_WINDOWPOS_CENTERED;
+			NewWindowY = SDL_WINDOWPOS_CENTERED;
+		} else {
+			NewWindowX = WinPositionsX[WinIndx];
+			NewWindowY = WinPositionsY[WinIndx];
+		}
+
+		CurWinIndx = WinIndx;
+	}
+#endif
+
+#if 0
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+#endif
+
+	if (NULL == (my_main_wind = SDL_CreateWindow(
+		(NULL != n_arg) ? n_arg : kStrAppName,
+		NewWindowX, NewWindowY,
+		NewWindowWidth, NewWindowHeight,
+		flags)))
+	{
+		fprintf(stderr, "SDL_CreateWindow fails: %s\n",
+			SDL_GetError());
+	} else
+	if (NULL == (my_renderer = SDL_CreateRenderer(
+		my_main_wind, -1,
+		0 /* SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC */
+			/*
+				SDL_RENDERER_ACCELERATED not needed
+				"no flags gives priority to available
+				SDL_RENDERER_ACCELERATED renderers"
+			*/
+			/* would rather not require vsync */
+		)))
+	{
+		fprintf(stderr, "SDL_CreateRenderer fails: %s\n",
+			SDL_GetError());
+	} else
+	if (NULL == (my_texture = SDL_CreateTexture(
+		my_renderer,
+		SDL_PIXELFORMAT_ARGB8888,
+		SDL_TEXTUREACCESS_STREAMING,
+#if UseSDLscaling
+		vMacScreenWidth, vMacScreenHeight
+#else
+		NewWindowWidth, NewWindowHeight
+#endif
+		)))
+	{
+		fprintf(stderr, "SDL_CreateTexture fails: %s\n",
+			SDL_GetError());
+	} else
+	if (NULL == (my_format = SDL_AllocFormat(SDL_PIXELFORMAT_ARGB8888)))
+	{
+		fprintf(stderr, "SDL_AllocFormat fails: %s\n",
+			SDL_GetError());
+	} else
+	{
+		/* SDL_ShowWindow(my_main_wind); */
+
+		SDL_RenderClear(my_renderer);
+
+#if 0
+		SDL_DisplayMode info;
+
+		if (0 != SDL_GetCurrentDisplayMode(0, &info)) {
+			fprintf(stderr, "SDL_GetCurrentDisplayMode fails: %s\n",
+				SDL_GetError());
+
+			return falseblnr;
+		}
+#endif
+
+#if VarFullScreen
+		if (UseFullScreen)
+#endif
+#if MayFullScreen
+		{
+			int wr;
+			int hr;
+
+			SDL_GL_GetDrawableSize(my_main_wind, &wr, &hr);
+
+			ViewHSize = wr;
+			ViewVSize = hr;
+#if EnableMagnify
+			if (UseMagnify) {
+				ViewHSize /= MyWindowScale;
+				ViewVSize /= MyWindowScale;
+			}
+#endif
+			if (ViewHSize >= vMacScreenWidth) {
+				ViewHStart = 0;
+				ViewHSize = vMacScreenWidth;
+			} else {
+				ViewHSize &= ~ 1;
+			}
+			if (ViewVSize >= vMacScreenHeight) {
+				ViewVStart = 0;
+				ViewVSize = vMacScreenHeight;
+			} else {
+				ViewVSize &= ~ 1;
+			}
+
+			if (wr > NewWindowWidth) {
+				hOffset = (wr - NewWindowWidth) / 2;
+			} else {
+				hOffset = 0;
+			}
+			if (hr > NewWindowHeight) {
+				vOffset = (hr - NewWindowHeight) / 2;
+			} else {
+				vOffset = 0;
+			}
+		}
+#endif
+
+#if 0 != vMacScreenDepth
+		ColorModeWorks = trueblnr;
+#endif
+
+		v = trueblnr;
+	}
+
+	return v;
+}
+
+LOCALPROC CloseMainWindow(void)
+{
+	/*
+		OSGLUxxx common:
+		Dispose of anything set up by CreateMainWindow.
+	*/
+
+	if (NULL != my_format) {
+		SDL_FreeFormat(my_format);
+		my_format = NULL;
+	}
+
+	if (NULL != my_texture) {
+		SDL_DestroyTexture(my_texture);
+		my_texture = NULL;
+	}
+
+	if (NULL != my_renderer) {
+		SDL_DestroyRenderer(my_renderer);
+		my_renderer = NULL;
+	}
+
+	if (NULL != my_main_wind) {
+		SDL_DestroyWindow(my_main_wind);
+		my_main_wind = NULL;
+	}
+}
+
+#if EnableRecreateW
+LOCALPROC ZapMyWState(void)
+{
+	my_main_wind = NULL;
+	my_renderer = NULL;
+	my_texture = NULL;
+	my_format = NULL;
+}
+#endif
+
+#if EnableRecreateW
+struct MyWState {
+#if MayFullScreen
+	ui4r f_ViewHSize;
+	ui4r f_ViewVSize;
+	ui4r f_ViewHStart;
+	ui4r f_ViewVStart;
+	int f_hOffset;
+	int f_vOffset;
+#endif
+#if VarFullScreen
+	blnr f_UseFullScreen;
+#endif
+#if EnableMagnify
+	blnr f_UseMagnify;
+#endif
+#if MayNotFullScreen
+	int f_CurWinIndx;
+#endif
+	SDL_Window *f_my_main_wind;
+	SDL_Renderer *f_my_renderer;
+	SDL_Texture *f_my_texture;
+	SDL_PixelFormat *f_my_format;
+};
+typedef struct MyWState MyWState;
+#endif
+
+#if EnableRecreateW
+LOCALPROC GetMyWState(MyWState *r)
+{
+#if MayFullScreen
+	r->f_ViewHSize = ViewHSize;
+	r->f_ViewVSize = ViewVSize;
+	r->f_ViewHStart = ViewHStart;
+	r->f_ViewVStart = ViewVStart;
+	r->f_hOffset = hOffset;
+	r->f_vOffset = vOffset;
+#endif
+#if VarFullScreen
+	r->f_UseFullScreen = UseFullScreen;
+#endif
+#if EnableMagnify
+	r->f_UseMagnify = UseMagnify;
+#endif
+#if MayNotFullScreen
+	r->f_CurWinIndx = CurWinIndx;
+#endif
+	r->f_my_main_wind = my_main_wind;
+	r->f_my_renderer = my_renderer;
+	r->f_my_texture = my_texture;
+	r->f_my_format = my_format;
+}
+#endif
+
+#if EnableRecreateW
+LOCALPROC SetMyWState(MyWState *r)
+{
+#if MayFullScreen
+	ViewHSize = r->f_ViewHSize;
+	ViewVSize = r->f_ViewVSize;
+	ViewHStart = r->f_ViewHStart;
+	ViewVStart = r->f_ViewVStart;
+	hOffset = r->f_hOffset;
+	vOffset = r->f_vOffset;
+#endif
+#if VarFullScreen
+	UseFullScreen = r->f_UseFullScreen;
+#endif
+#if EnableMagnify
+	UseMagnify = r->f_UseMagnify;
+#endif
+#if MayNotFullScreen
+	CurWinIndx = r->f_CurWinIndx;
+#endif
+	my_main_wind = r->f_my_main_wind;
+	my_renderer = r->f_my_renderer;
+	my_texture = r->f_my_texture;
+	my_format = r->f_my_format;
+}
+#endif
+
+#if VarFullScreen && EnableMagnify
+enum {
+	kWinStateWindowed,
+#if EnableMagnify
+	kWinStateFullScreen,
+#endif
+	kNumWinStates
+};
+#endif
+
+#if VarFullScreen && EnableMagnify
+LOCALVAR int WinMagStates[kNumWinStates];
+#endif
+
+#if EnableRecreateW
+LOCALFUNC blnr ReCreateMainWindow(void)
+{
+	/*
+		OSGLUxxx common:
+		Like CreateMainWindow (which it calls), except may be
+		called when already have window, without CloseMainWindow
+		being called first. (Usually with different
+		values of WantMagnify and WantFullScreen than
+		on the previous call.)
+
+		If there is existing window, and fail to create
+		the new one, then existing window must be left alone,
+		in valid state. (and return falseblnr. otherwise,
+		if succeed, return trueblnr)
+
+		i.e. can allocate the new one before disposing
+		of the old one.
+	*/
+
+	MyWState old_state;
+	MyWState new_state;
+#if HaveWorkingWarp
+	blnr HadCursorHidden = HaveCursorHidden;
+#endif
+#if VarFullScreen && EnableMagnify
+	int OldWinState =
+		UseFullScreen ? kWinStateFullScreen : kWinStateWindowed;
+	int OldMagState =
+		UseMagnify ? kMagStateMagnifgy : kMagStateNormal;
+
+	WinMagStates[OldWinState] =
+		OldMagState;
+#endif
+
+#if VarFullScreen
+	if (! UseFullScreen)
+#endif
+#if MayNotFullScreen
+	{
+		SDL_GetWindowPosition(my_main_wind,
+			&WinPositionsX[CurWinIndx],
+			&WinPositionsY[CurWinIndx]);
+		HavePositionWins[CurWinIndx] = trueblnr;
+	}
+#endif
+
+	ForceShowCursor(); /* hide/show cursor api is per window */
+
+#if MayFullScreen
+	if (GrabMachine) {
+		GrabMachine = falseblnr;
+		UngrabMachine();
+	}
+#endif
+
+	GetMyWState(&old_state);
+
+	ZapMyWState();
+
+#if EnableMagnify
+	UseMagnify = WantMagnify;
+#endif
+#if VarFullScreen
+	UseFullScreen = WantFullScreen;
+#endif
+
+	if (! CreateMainWindow()) {
+		CloseMainWindow();
+		SetMyWState(&old_state);
+
+		/* avoid retry */
+#if VarFullScreen
+		WantFullScreen = UseFullScreen;
+#endif
+#if EnableMagnify
+		WantMagnify = UseMagnify;
+#endif
+
+	} else {
+		GetMyWState(&new_state);
+		SetMyWState(&old_state);
+		CloseMainWindow();
+		SetMyWState(&new_state);
+
+#if HaveWorkingWarp
+		if (HadCursorHidden) {
+			(void) MyMoveMouse(CurMouseH, CurMouseV);
+		}
+#endif
+	}
+
+	return trueblnr;
+}
+#endif
+
+#endif /* SDL_MAJOR_VERSION */
+
+
 LOCALPROC ZapWinStateVars(void)
 {
+#if 2 == SDL_MAJOR_VERSION
+#if MayNotFullScreen
+	{
+		int i;
+
+		for (i = 0; i < kNumMagStates; ++i) {
+			HavePositionWins[i] = falseblnr;
+		}
+	}
+#endif
+#if VarFullScreen && EnableMagnify
+	{
+		int i;
+
+		for (i = 0; i < kNumWinStates; ++i) {
+			WinMagStates[i] = kMagStateAuto;
+		}
+	}
+#endif
+#endif /* 2 == SDL_MAJOR_VERSION */
 }
 
 #if VarFullScreen
 LOCALPROC ToggleWantFullScreen(void)
 {
 	WantFullScreen = ! WantFullScreen;
+
+#if EnableMagnify && (2 == SDL_MAJOR_VERSION)
+	{
+		int OldWinState =
+			UseFullScreen ? kWinStateFullScreen : kWinStateWindowed;
+		int OldMagState =
+			UseMagnify ? kMagStateMagnifgy : kMagStateNormal;
+		int NewWinState =
+			WantFullScreen ? kWinStateFullScreen : kWinStateWindowed;
+		int NewMagState = WinMagStates[NewWinState];
+
+		WinMagStates[OldWinState] = OldMagState;
+		if (kMagStateAuto != NewMagState) {
+			WantMagnify = (kMagStateMagnifgy == NewMagState);
+		} else {
+			WantMagnify = falseblnr;
+			if (WantFullScreen) {
+				SDL_Rect r;
+
+				if (0 == SDL_GetDisplayBounds(0, &r)) {
+					if ((r.w >= vMacScreenWidth * MyWindowScale)
+						&& (r.h >= vMacScreenHeight * MyWindowScale)
+						)
+					{
+						WantMagnify = trueblnr;
+					}
+				}
+			}
+		}
+	}
+#endif
 }
 #endif
 
@@ -2064,7 +4526,7 @@ LOCALPROC CheckForSavedTasks(void)
 		MyEvtQTryRecoverFromFull();
 	}
 
-#if EnableFSMouseMotion
+#if EnableFSMouseMotion && HaveWorkingWarp
 	if (HaveMouseMotion) {
 		MyMouseConstrain();
 	}
@@ -2158,8 +4620,10 @@ LOCALPROC CheckForSavedTasks(void)
 		&& ! (gTrueBackgroundFlag || CurSpeedStopped)))
 	{
 		HaveCursorHidden = ! HaveCursorHidden;
+#if 0 != SDL_MAJOR_VERSION
 		(void) SDL_ShowCursor(
 			HaveCursorHidden ? SDL_DISABLE : SDL_ENABLE);
+#endif
 	}
 }
 
@@ -2169,6 +4633,10 @@ LOCALFUNC blnr ScanCommandLine(void)
 {
 	char *pa;
 	int i = 1;
+
+#if dbglog_OSGInit
+	dbglog_writeln("enter ScanCommandLine"); /*^*/
+#endif
 
 label_retry:
 	if (i < my_argc) {
@@ -2182,8 +4650,31 @@ label_retry:
 					goto label_retry;
 				}
 			} else
+			if (0 == strcmp(pa, "-n"))
+			{
+				if (i < my_argc) {
+					n_arg = my_argv[i++];
+					goto label_retry;
+				}
+			} else
+			if (0 == strcmp(pa, "-d"))
+			{
+				if (i < my_argc) {
+					d_arg = my_argv[i++];
+					goto label_retry;
+				}
+			} else
+			if (('p' == pa[1]) && ('s' == pa[2]) && ('n' == pa[3]))
+			{
+				/* seen in OS X. ignore */
+				goto label_retry;
+			} else
 			{
 				MacMsg(kStrBadArgTitle, kStrBadArgMessage, falseblnr);
+#if dbglog_HAVE
+				dbglog_writeln("bad command line argument");
+				dbglog_writeln(pa);
+#endif
 			}
 		} else {
 			(void) Sony_Insert1(pa, falseblnr);
@@ -2196,15 +4687,11 @@ label_retry:
 
 /* --- main program flow --- */
 
-GLOBALOSGLUFUNC blnr ExtraTimeNotOver(void)
-{
-	UpdateTrueEmulatedTime();
-	return TrueEmulatedTime == OnTrueTime;
-}
-
 LOCALPROC WaitForTheNextEvent(void)
 {
+#if 0 != SDL_MAJOR_VERSION
 	SDL_Event event;
+
 #ifdef EMSCRIPTEN
 	if (SDL_PollEvent(&event)) {
 #else
@@ -2212,16 +4699,46 @@ LOCALPROC WaitForTheNextEvent(void)
 #endif
 		HandleTheEvent(&event);
 	}
+#endif
 }
 
 LOCALPROC CheckForSystemEvents(void)
 {
+	/*
+		OSGLUxxx common:
+		Handle any events that are waiting for us.
+		Return immediately when no more events
+		are waiting, don't wait for more.
+	*/
+
+#if 0 != SDL_MAJOR_VERSION
 	SDL_Event event;
 	int i = 10;
 
 	while ((--i >= 0) && SDL_PollEvent(&event)) {
 		HandleTheEvent(&event);
 	}
+#endif
+}
+
+/*
+	OSGLUxxx common:
+	In general, attempt to emulate one Macintosh tick (1/60.14742
+	seconds) for every tick of real time. When done emulating
+	one tick, wait for one tick of real time to elapse, by
+	calling WaitForNextTick.
+
+	But, Mini vMac can run the emulation at greater than 1x speed, up to
+	and including running as fast as possible, by emulating extra cycles
+	at the end of the emulated tick. In this case, the extra emulation
+	should continue only as long as the current real time tick is not
+	over - until ExtraTimeNotOver returns false.
+*/
+
+GLOBALOSGLUFUNC blnr ExtraTimeNotOver(void)
+{
+	UpdateTrueEmulatedTime();
+	return TrueEmulatedTime == OnTrueTime;
 }
 
 GLOBALOSGLUPROC WaitForNextTick(void)
@@ -2239,15 +4756,21 @@ label_retry:
 		WaitForTheNextEvent();
 #ifdef EMSCRIPTEN
 		emscripten_sleep_with_yield(0);
-#endif		
+#endif	
 		goto label_retry;
 	}
 
+#if ! HaveWorkingTime
+	++TrueEmulatedTime;
+#endif
+
 	if (ExtraTimeNotOver()) {
+#if 0 != SDL_MAJOR_VERSION
 #ifndef EMSCRIPTEN
 		(void) SDL_Delay(NextIntTime - LastTime);
 #else
 		(void) emscripten_sleep_with_yield(NextIntTime - LastTime);
+#endif
 #endif
 		goto label_retry;
 	}
@@ -2283,6 +4806,14 @@ label_retry:
 
 LOCALPROC ZapOSGLUVars(void)
 {
+	/*
+		OSGLUxxx common:
+		Set initial values of variables for
+		platform dependent code, where not
+		done using c initializers. (such
+		as for arrays.)
+	*/
+
 	InitDrives();
 	ZapWinStateVars();
 }
@@ -2342,9 +4873,37 @@ LOCALPROC UnallocMyMemory(void)
 	}
 }
 
+#if CanGetAppPath
+LOCALFUNC blnr InitWhereAmI(void)
+{
+	app_parent = SDL_GetBasePath();
+
+	pref_dir = SDL_GetPrefPath("gryphel", "minivmac");
+
+	return trueblnr; /* keep going regardless */
+}
+#endif
+
+#if CanGetAppPath
+LOCALPROC UninitWhereAmI(void)
+{
+	SDL_free(pref_dir);
+
+	SDL_free(app_parent);
+}
+#endif
+
 LOCALFUNC blnr InitOSGLU(void)
 {
+	/*
+		OSGLUxxx common:
+		Run all the initializations needed for the program.
+	*/
+
 	if (AllocMyMemory())
+#if CanGetAppPath
+	if (InitWhereAmI())
+#endif
 #if dbglog_HAVE
 	if (dbglog_open())
 #endif
@@ -2366,6 +4925,11 @@ LOCALFUNC blnr InitOSGLU(void)
 
 LOCALPROC UnInitOSGLU(void)
 {
+	/*
+		OSGLUxxx common:
+		Do all clean ups needed before the program quits.
+	*/
+
 	if (MacMsgDisplayed) {
 		MacMsgDisplayOff();
 	}
@@ -2391,11 +4955,18 @@ LOCALPROC UnInitOSGLU(void)
 	dbglog_close();
 #endif
 
+#if CanGetAppPath
+	UninitWhereAmI();
+#endif
 	UnallocMyMemory();
 
 	CheckSavedMacMsg();
 
+	CloseMainWindow();
+
+#if 0 != SDL_MAJOR_VERSION
 	SDL_Quit();
+#endif
 }
 
 int main(int argc, char **argv)
@@ -2411,3 +4982,5 @@ int main(int argc, char **argv)
 
 	return 0;
 }
+
+#endif /* WantOSGLUSDL */

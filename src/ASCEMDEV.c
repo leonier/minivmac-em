@@ -18,14 +18,11 @@
 	Apple Sound Chip EMulated DEVice
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
-#include "MYOSGLUE.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
+#include "PICOMMON.h"
+
+#if EmASC
+
 #include "VIAEMDEV.h"
-#endif
 
 #include "ASCEMDEV.h"
 
@@ -330,7 +327,9 @@ GLOBALFUNC ui5b ASC_Access(ui5b Data, blnr WriteMem, CPTR addr)
 #endif
 					SoundReg804 = Data;
 					if (0 != SoundReg804) {
+#ifdef ASC_interrupt_PulseNtfy
 						ASC_interrupt_PulseNtfy();
+#endif
 						/*
 							Generating this interrupt seems
 							to be the point of writing to
@@ -815,7 +814,9 @@ label_retry:
 #if ASC_dolog
 				dbglog_WriteNote("setting half flag A");
 #endif
+#ifdef ASC_interrupt_PulseNtfy
 				ASC_interrupt_PulseNtfy();
+#endif
 				SoundReg804 |= 0x01;
 			}
 		}
@@ -844,7 +845,9 @@ label_retry:
 #if ASC_dolog
 					dbglog_WriteNote("setting half flag B");
 #endif
+#ifdef ASC_interrupt_PulseNtfy
 					ASC_interrupt_PulseNtfy();
+#endif
 					SoundReg804 |= 0x04;
 				}
 			}
@@ -866,3 +869,5 @@ label_retry:
 	}
 #endif
 }
+
+#endif /* EmASC */

@@ -22,13 +22,9 @@
 	This code adapted from vMac by Philip Cummins.
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
+#include "PICOMMON.h"
 
-#include "MYOSGLUE.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
-#endif
+#if EmVIA2
 
 #include "VIA2EMDV.h"
 
@@ -734,9 +730,8 @@ GLOBALPROC VIA2_DoTimer1Check(void)
 				if (NewTemp == 0) {
 					NewTimer = (0x00010000UL * CyclesScaledPerViaTime);
 				} else {
-					NewTimer =
-						(1 + (NewTemp >> (16 - kLn2CycleScale)))
-							* CyclesPerViaTime;
+					NewTimer = (1 + (NewTemp >> (16 - kLn2CycleScale)))
+						* CyclesPerViaTime;
 				}
 				ICT_add(kICT_VIA2_Timer1Check, NewTimer);
 				VIA2_T1IntReady = trueblnr;
@@ -779,11 +774,30 @@ GLOBALFUNC ui4b VIA2_GetT1InvertTime(void)
 
 LOCALVAR blnr VIA2_T2Running = trueblnr;
 LOCALVAR blnr VIA2_T2C_ShortTime = falseblnr;
+	/*
+		Running too many instructions during a short
+		timer interval can crash when playing sounds.
+		So in this case don't let timer pause.
+		Reliable crash prevented, especially at full speed:
+			* completion sound in Jigsaw Puzzle
+				by Captain's Software
+		Reliable crashes in previous version of
+			this hack, where let timer continue
+			running until end of current extra cycles:
+			* Some sounds in HyperCard, like for
+				ballerina demo in tour stack. Also some sounds
+				in "the Manhole", including opening door to see
+				rabbit in fire hydrant.
+			* Playing alert sounds in
+				Sound control panel.
+			* "Try Scale With Sound" command of a
+				"snds" resource in ResEdit.
+	*/
 LOCALVAR iCountt VIA2_T2LastTime = 0;
 
 GLOBALPROC VIA2_DoTimer2Check(void)
 {
-	if (VIA2_T2Running) {
+	if (VIA2_T2Running || VIA2_T2C_ShortTime) {
 		iCountt NewTime = GetCuriCount();
 		ui5b Temp = VIA2_D.T2C_F; /* Get Timer 2 Counter */
 		iCountt deltaTime = (NewTime - VIA2_T2LastTime);
@@ -805,6 +819,9 @@ GLOBALPROC VIA2_DoTimer2Check(void)
 #ifdef _VIA_Debug
 				fprintf(stderr, "posting Timer2Check, %d, %d\n",
 					Temp, GetCuriCount());
+#endif
+#if VIA2_dolog
+				dbglog_WriteNote("VIA2 Timer 2 Later");
 #endif
 				if (NewTemp == 0) {
 					NewTimer = (0x00010000UL * CyclesScaledPerViaTime);
@@ -950,14 +967,19 @@ GLOBALFUNC ui5b VIA2_Access(ui5b Data, blnr WriteMem, CPTR addr)
 				if ((VIA2_D.T2C_F < (128UL << 16))
 					&& (VIA2_D.T2C_F != 0))
 				{
+#if VIA2_dolog
+					dbglog_StartLine();
+					dbglog_writeCStr("VIA2_T2C_ShortTime ");
+					dbglog_writeHex(VIA2_D.T2C_F);
+					dbglog_writeCStr(", IER ");
+					dbglog_writeHex(VIA2_D.IER);
+					dbglog_writeCStr(", VIA2_T2Running ");
+					dbglog_writeHex(VIA2_T2Running);
+					dbglog_writeCStr(", VIA2_T2C_ShortTime ");
+					dbglog_writeHex(VIA2_T2C_ShortTime);
+					dbglog_writeReturn();
+#endif
 					VIA2_T2C_ShortTime = trueblnr;
-					VIA2_T2Running = trueblnr;
-					/*
-						Running too many instructions during
-						a short timer interval can crash when
-						playing sounds in System 7. So
-						in this case don't let timer pause.
-					*/
 				}
 				VIA2_T2LastTime = GetCuriCount();
 				VIA2_DoTimer2Check();
@@ -1169,11 +1191,14 @@ GLOBALFUNC ui5b VIA2_Access(ui5b Data, blnr WriteMem, CPTR addr)
 
 GLOBALPROC VIA2_ExtraTimeBegin(void)
 {
+#if VIA2_dolog
+	dbglog_WriteNote("VIA2_ExtraTimeBegin");
+#endif
 	if (VIA2_T1Running) {
 		VIA2_DoTimer1Check(); /* run up to this moment */
 		VIA2_T1Running = falseblnr;
 	}
-	if (VIA2_T2Running & (! VIA2_T2C_ShortTime)) {
+	if (VIA2_T2Running) {
 		VIA2_DoTimer2Check(); /* run up to this moment */
 		VIA2_T2Running = falseblnr;
 	}
@@ -1181,6 +1206,9 @@ GLOBALPROC VIA2_ExtraTimeBegin(void)
 
 GLOBALPROC VIA2_ExtraTimeEnd(void)
 {
+#if VIA2_dolog
+	dbglog_WriteNote("VIA2_ExtraTimeEnd");
+#endif
 	if (! VIA2_T1Running) {
 		VIA2_T1Running = trueblnr;
 		VIA2_T1LastTime = GetCuriCount();
@@ -1188,7 +1216,9 @@ GLOBALPROC VIA2_ExtraTimeEnd(void)
 	}
 	if (! VIA2_T2Running) {
 		VIA2_T2Running = trueblnr;
-		VIA2_T2LastTime = GetCuriCount();
+		if (! VIA2_T2C_ShortTime) {
+			VIA2_T2LastTime = GetCuriCount();
+		}
 		VIA2_DoTimer2Check();
 	}
 }
@@ -1222,3 +1252,5 @@ GLOBALPROC VIA2_iCB2_PulseNtfy(void)
 	VIA2_SetInterruptFlag(kIntCB2);
 }
 #endif
+
+#endif /* EmVIA2 */

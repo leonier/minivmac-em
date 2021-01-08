@@ -18,13 +18,10 @@
 	Operating System GLUe for Nintendo DS
 */
 
-#include "CNFGRAPI.h"
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
+#include "OSGCOMUI.h"
+#include "OSGCOMUD.h"
 
-#include "MYOSGLUE.h"
-
-#include "STRCONST.h"
+#ifdef WantOSGLUNDS
 
 #include "FB1BPP2I.h"
 
@@ -856,8 +853,6 @@ LOCALFUNC blnr InitLocationDat(void)
 
 LOCALPROC CheckSavedMacMsg(void)
 {
-	/* called only on quit, if error saved but not yet reported */
-
 	if (nullpr != SavedBriefMsg) {
 		char briefMsg0[ClStrMaxLength + 1];
 		char longMsg0[ClStrMaxLength + 1];
@@ -1385,3 +1380,5 @@ int main(int argc, char **argv)
 
 	return 0;
 }
+
+#endif /* WantOSGLUNDS */

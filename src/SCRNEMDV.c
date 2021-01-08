@@ -24,13 +24,7 @@
 	Macintosh port of vMac, by Philip Cummins.
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-#include "MYOSGLUE.h"
-#include "ENDIANAC.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
-#endif
+#include "PICOMMON.h"
 
 #include "SCRNEMDV.h"
 

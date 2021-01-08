@@ -35,13 +35,10 @@
 	looking at included examples, one by Paul Sheer.
 */
 
-#include "CNFGRAPI.h"
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
+#include "OSGCOMUI.h"
+#include "OSGCOMUD.h"
 
-#include "MYOSGLUE.h"
-
-#include "STRCONST.h"
+#ifdef WantOSGLUXWN
 
 /* --- some simple utilities --- */
 
@@ -134,7 +131,9 @@ LOCALPROC MyMayFree(char *p)
 
 #if dbglog_HAVE
 
+#ifndef dbglog_ToStdErr
 #define dbglog_ToStdErr 0
+#endif
 
 #if ! dbglog_ToStdErr
 LOCALVAR FILE *dbglog_File = NULL;
@@ -1859,288 +1858,1043 @@ LOCALPROC CheckMouseState(void)
 
 /* --- keyboard input --- */
 
-LOCALVAR KeyCode TheCapsLockCode;
+/*
+	translation table - X11 KeySym -> Mac key code
 
-LOCALVAR ui3b KC2MKC[256];
+	Used to create KC2MKC table (X11 key code -> Mac key code)
 
-LOCALPROC KC2MKCAssignOne(KeySym ks, ui3r key)
-{
-	KeyCode code = XKeysymToKeycode(x_display, ks);
-	if (code != NoSymbol) {
-		KC2MKC[code] = key;
-	}
-#if 0
-	fprintf(stderr, "%d %d %d\n", (int)ks, key, (int)code);
-#endif
-}
+	Includes effect of any key mapping set with the
+	mini vmac '-km' compile time option.
 
-LOCALFUNC blnr KC2MKCInit(void)
-{
-	int i;
+	The real CapsLock key needs special treatment,
+	so use MKC_real_CapsLock here,
+	which is later remapped to MKC_formac_CapsLock.
 
-	for (i = 0; i < 256; ++i) {
-		KC2MKC[i] = MKC_None;
-	}
+	Ordered to match order of keycodes on Linux, the most
+	common port using this X11 code, making the code using
+	this table more efficient.
+*/
 
-#if 0 /* find Keysym for a code */
-	for (i = 0; i < 64 * 1024; ++i) {
-		KeyCode code = XKeysymToKeycode(x_display, i);
-		if (115 == code) {
-			fprintf(stderr, "i %d\n", i);
-		}
-	}
+/*
+	The actual data is in the comments of this enum,
+	from which MT2KeySym and MT2MKC are created by script.
+*/
+enum {
+	kMT_Escape, /* XK_Escape MKC_formac_Escape */
+	kMT_1, /* XK_1 MKC_1 */
+	kMT_2, /* XK_2 MKC_2 */
+	kMT_3, /* XK_3 MKC_3 */
+	kMT_4, /* XK_4 MKC_4 */
+	kMT_5, /* XK_5 MKC_5 */
+	kMT_6, /* XK_6 MKC_6 */
+	kMT_7, /* XK_7 MKC_7 */
+	kMT_8, /* XK_8 MKC_8 */
+	kMT_9, /* XK_9 MKC_9 */
+	kMT_0, /* XK_0 MKC_0 */
+	kMT_minus, /* XK_minus MKC_Minus */
+	kMT_underscore, /* XK_underscore MKC_Minus */
+	kMT_equal, /* XK_equal MKC_Equal */
+	kMT_plus, /* XK_plus MKC_Equal */
+	kMT_BackSpace, /* XK_BackSpace MKC_BackSpace */
+	kMT_Tab, /* XK_Tab MKC_Tab */
+	kMT_q, /* XK_q MKC_Q */
+	kMT_Q, /* XK_Q MKC_Q */
+	kMT_w, /* XK_w MKC_W */
+	kMT_W, /* XK_W MKC_W */
+	kMT_e, /* XK_e MKC_E */
+	kMT_E, /* XK_E MKC_E */
+	kMT_r, /* XK_r MKC_R */
+	kMT_R, /* XK_R MKC_R */
+	kMT_t, /* XK_t MKC_T */
+	kMT_T, /* XK_T MKC_T */
+	kMT_y, /* XK_y MKC_Y */
+	kMT_Y, /* XK_Y MKC_Y */
+	kMT_u, /* XK_u MKC_U */
+	kMT_U, /* XK_U MKC_U */
+	kMT_i, /* XK_i MKC_I */
+	kMT_I, /* XK_I MKC_I */
+	kMT_o, /* XK_o MKC_O */
+	kMT_O, /* XK_O MKC_O */
+	kMT_p, /* XK_p MKC_P */
+	kMT_P, /* XK_P MKC_P */
+	kMT_bracketleft, /* XK_bracketleft MKC_LeftBracket */
+	kMT_braceleft, /* XK_braceleft MKC_LeftBracket */
+	kMT_bracketright, /* XK_bracketright MKC_RightBracket */
+	kMT_braceright, /* XK_braceright MKC_RightBracket */
+	kMT_Return, /* XK_Return MKC_Return */
+	kMT_Control_L, /* XK_Control_L MKC_formac_Control */
+	kMT_a, /* XK_a MKC_A */
+	kMT_A, /* XK_A MKC_A */
+	kMT_s, /* XK_s MKC_S */
+	kMT_S, /* XK_S MKC_S */
+	kMT_d, /* XK_d MKC_D */
+	kMT_D, /* XK_D MKC_D */
+	kMT_f, /* XK_f MKC_F */
+	kMT_F, /* XK_F MKC_F */
+	kMT_g, /* XK_g MKC_G */
+	kMT_G, /* XK_G MKC_G */
+	kMT_h, /* XK_h MKC_H */
+	kMT_H, /* XK_H MKC_H */
+	kMT_j, /* XK_j MKC_J */
+	kMT_J, /* XK_J MKC_J */
+	kMT_k, /* XK_k MKC_K */
+	kMT_K, /* XK_K MKC_K */
+	kMT_l, /* XK_l MKC_L */
+	kMT_L, /* XK_L MKC_L */
+	kMT_semicolon, /* XK_semicolon MKC_SemiColon */
+	kMT_colon, /* XK_colon MKC_SemiColon */
+	kMT_apostrophe, /* XK_apostrophe MKC_SingleQuote */
+	kMT_quotedbl, /* XK_quotedbl MKC_SingleQuote */
+	kMT_grave, /* XK_grave MKC_formac_Grave */
+	kMT_asciitilde, /* XK_asciitilde MKC_formac_Grave */
+	kMT_Shift_L, /* XK_Shift_L MKC_formac_Shift */
+	kMT_backslash, /* XK_backslash MKC_formac_BackSlash */
+	kMT_bar, /* XK_bar MKC_formac_BackSlash */
+	kMT_z, /* XK_z MKC_Z */
+	kMT_Z, /* XK_Z MKC_Z */
+	kMT_x, /* XK_x MKC_X */
+	kMT_X, /* XK_X MKC_X */
+	kMT_c, /* XK_c MKC_C */
+	kMT_C, /* XK_C MKC_C */
+	kMT_v, /* XK_v MKC_V */
+	kMT_V, /* XK_V MKC_V */
+	kMT_b, /* XK_b MKC_B */
+	kMT_B, /* XK_B MKC_B */
+	kMT_n, /* XK_n MKC_N */
+	kMT_N, /* XK_N MKC_N */
+	kMT_m, /* XK_m MKC_M */
+	kMT_M, /* XK_M MKC_M */
+	kMT_comma, /* XK_comma MKC_Comma */
+	kMT_period, /* XK_period MKC_Period */
+	kMT_greater, /* XK_greater MKC_Period */
+	kMT_slash, /* XK_slash MKC_formac_Slash */
+	kMT_question, /* XK_question MKC_formac_Slash */
+	kMT_Shift_R, /* XK_Shift_R MKC_formac_RShift */
+	kMT_KP_Multiply, /* XK_KP_Multiply MKC_KPMultiply */
+	kMT_Alt_L, /* XK_Alt_L MKC_formac_Command */
+	kMT_space, /* XK_space MKC_Space */
+	kMT_Caps_Lock, /* XK_Caps_Lock MKC_real_CapsLock */
+	kMT_F1, /* XK_F1 MKC_formac_F1 */
+	kMT_F2, /* XK_F2 MKC_formac_F2 */
+	kMT_F3, /* XK_F3 MKC_formac_F3 */
+	kMT_F4, /* XK_F4 MKC_formac_F4 */
+	kMT_F5, /* XK_F5 MKC_formac_F5 */
+	kMT_F6, /* XK_F6 MKC_F6 */
+	kMT_F7, /* XK_F7 MKC_F7 */
+	kMT_F8, /* XK_F8 MKC_F8 */
+	kMT_F9, /* XK_F9 MKC_F9 */
+	kMT_F10, /* XK_F10 MKC_F10 */
+	kMT_Num_Lock, /* XK_Num_Lock MKC_Clear */
+#ifdef XK_Scroll_Lock
+	kMT_Scroll_Lock, /* XK_Scroll_Lock MKC_ScrollLock */
+#endif
+#ifdef XK_F14
+	kMT_F14, /* XK_F14 MKC_ScrollLock */
 #endif
 
-	/*
-	start with redundant mappings, should get overwritten
-	by main mappings but define them just in case
-	*/
-
-#ifdef XK_KP_Insert
-	KC2MKCAssignOne(XK_KP_Insert, MKC_KP0);
-#endif
-#ifdef XK_KP_End
-	KC2MKCAssignOne(XK_KP_End, MKC_KP1);
-#endif
-#ifdef XK_KP_Down
-	KC2MKCAssignOne(XK_KP_Down, MKC_KP2);
-#endif
-#ifdef XK_KP_Next
-	KC2MKCAssignOne(XK_KP_Next, MKC_KP3);
-#endif
-#ifdef XK_KP_Left
-	KC2MKCAssignOne(XK_KP_Left, MKC_KP4);
-#endif
-#ifdef XK_KP_Begin
-	KC2MKCAssignOne(XK_KP_Begin, MKC_KP5);
-#endif
-#ifdef XK_KP_Right
-	KC2MKCAssignOne(XK_KP_Right, MKC_KP6);
-#endif
+	kMT_KP_7, /* XK_KP_7 MKC_KP7 */
 #ifdef XK_KP_Home
-	KC2MKCAssignOne(XK_KP_Home, MKC_KP7);
+	kMT_KP_Home, /* XK_KP_Home MKC_KP7 */
 #endif
+
+	kMT_KP_8, /* XK_KP_8 MKC_KP8 */
 #ifdef XK_KP_Up
-	KC2MKCAssignOne(XK_KP_Up, MKC_KP8);
+	kMT_KP_Up, /* XK_KP_Up MKC_KP8 */
 #endif
+
+	kMT_KP_9, /* XK_KP_9 MKC_KP9 */
+#ifdef XK_KP_Page_Up
+	kMT_KP_Page_Up, /* XK_KP_Page_Up MKC_KP9 */
+#else
 #ifdef XK_KP_Prior
-	KC2MKCAssignOne(XK_KP_Prior, MKC_KP9);
+	kMT_KP_Prior, /* XK_KP_Prior MKC_KP9 */
+#endif
+#endif
+
+	kMT_KP_Subtract, /* XK_KP_Subtract MKC_KPSubtract */
+
+	kMT_KP_4, /* XK_KP_4 MKC_KP4 */
+#ifdef XK_KP_Left
+	kMT_KP_Left, /* XK_KP_Left MKC_KP4 */
+#endif
+
+	kMT_KP_5, /* XK_KP_5 MKC_KP5 */
+#ifdef XK_KP_Begin
+	kMT_KP_Begin, /* XK_KP_Begin MKC_KP5 */
+#endif
+
+	kMT_KP_6, /* XK_KP_6 MKC_KP6 */
+#ifdef XK_KP_Right
+	kMT_KP_Right, /* XK_KP_Right MKC_KP6 */
+#endif
+
+	kMT_KP_Add, /* XK_KP_Add MKC_KPAdd */
+
+	kMT_KP_1, /* XK_KP_1 MKC_KP1 */
+#ifdef XK_KP_End
+	kMT_KP_End, /* XK_KP_End MKC_KP1 */
+#endif
+
+	kMT_KP_2, /* XK_KP_2 MKC_KP2 */
+#ifdef XK_KP_Down
+	kMT_KP_Down, /* XK_KP_Down MKC_KP2 */
+#endif
+
+	kMT_KP_3, /* XK_KP_3 MKC_KP3 */
+#ifdef XK_Page_Down
+	kMT_KP_Page_Down, /* XK_KP_Page_Down MKC_KP3 */
+#else
+#ifdef XK_KP_Next
+	kMT_KP_Next, /* XK_KP_Next MKC_KP3 */
+#endif
+#endif
+
+	kMT_KP_0, /* XK_KP_0 MKC_KP0 */
+#ifdef XK_KP_Insert
+	kMT_KP_Insert, /* XK_KP_Insert MKC_KP0 */
 #endif
 #ifdef XK_KP_Delete
-	KC2MKCAssignOne(XK_KP_Delete, MKC_Decimal);
+	kMT_KP_Delete, /* XK_KP_Delete MKC_Decimal */
 #endif
 
-	KC2MKCAssignOne(XK_asciitilde, MKC_formac_Grave);
-	KC2MKCAssignOne(XK_underscore, MKC_Minus);
-	KC2MKCAssignOne(XK_plus, MKC_Equal);
-	KC2MKCAssignOne(XK_braceleft, MKC_LeftBracket);
-	KC2MKCAssignOne(XK_braceright, MKC_RightBracket);
-	KC2MKCAssignOne(XK_bar, MKC_formac_BackSlash);
-	KC2MKCAssignOne(XK_colon, MKC_SemiColon);
-	KC2MKCAssignOne(XK_quotedbl, MKC_SingleQuote);
-	KC2MKCAssignOne(XK_less, MKC_Comma);
-	KC2MKCAssignOne(XK_greater, MKC_Period);
-	KC2MKCAssignOne(XK_question, MKC_formac_Slash);
-
-	KC2MKCAssignOne(XK_a, MKC_A);
-	KC2MKCAssignOne(XK_b, MKC_B);
-	KC2MKCAssignOne(XK_c, MKC_C);
-	KC2MKCAssignOne(XK_d, MKC_D);
-	KC2MKCAssignOne(XK_e, MKC_E);
-	KC2MKCAssignOne(XK_f, MKC_F);
-	KC2MKCAssignOne(XK_g, MKC_G);
-	KC2MKCAssignOne(XK_h, MKC_H);
-	KC2MKCAssignOne(XK_i, MKC_I);
-	KC2MKCAssignOne(XK_j, MKC_J);
-	KC2MKCAssignOne(XK_k, MKC_K);
-	KC2MKCAssignOne(XK_l, MKC_L);
-	KC2MKCAssignOne(XK_m, MKC_M);
-	KC2MKCAssignOne(XK_n, MKC_N);
-	KC2MKCAssignOne(XK_o, MKC_O);
-	KC2MKCAssignOne(XK_p, MKC_P);
-	KC2MKCAssignOne(XK_q, MKC_Q);
-	KC2MKCAssignOne(XK_r, MKC_R);
-	KC2MKCAssignOne(XK_s, MKC_S);
-	KC2MKCAssignOne(XK_t, MKC_T);
-	KC2MKCAssignOne(XK_u, MKC_U);
-	KC2MKCAssignOne(XK_v, MKC_V);
-	KC2MKCAssignOne(XK_w, MKC_W);
-	KC2MKCAssignOne(XK_x, MKC_X);
-	KC2MKCAssignOne(XK_y, MKC_Y);
-	KC2MKCAssignOne(XK_z, MKC_Z);
-
-	/*
-	main mappings
-	*/
-
-	KC2MKCAssignOne(XK_F1, MKC_formac_F1);
-	KC2MKCAssignOne(XK_F2, MKC_formac_F2);
-	KC2MKCAssignOne(XK_F3, MKC_formac_F3);
-	KC2MKCAssignOne(XK_F4, MKC_formac_F4);
-	KC2MKCAssignOne(XK_F5, MKC_formac_F5);
-	KC2MKCAssignOne(XK_F6, MKC_F6);
-	KC2MKCAssignOne(XK_F7, MKC_F7);
-	KC2MKCAssignOne(XK_F8, MKC_F8);
-	KC2MKCAssignOne(XK_F9, MKC_F9);
-	KC2MKCAssignOne(XK_F10, MKC_F10);
-	KC2MKCAssignOne(XK_F11, MKC_F11);
-	KC2MKCAssignOne(XK_F12, MKC_F12);
-
-#ifdef XK_Delete
-	KC2MKCAssignOne(XK_Delete, MKC_formac_ForwardDel);
+	/* XK_ISO_Level3_Shift */
+	/* nothing */
+#ifdef XK_less
+	kMT_less, /* XK_less MKC_Comma */
 #endif
-#ifdef XK_Insert
-	KC2MKCAssignOne(XK_Insert, MKC_formac_Help);
+	kMT_F11, /* XK_F11 MKC_F11 */
+	kMT_F12, /* XK_F12 MKC_F12 */
+	/* nothing */
+	/* XK_Katakana */
+	/* XK_Hiragana */
+	/* XK_Henkan */
+	/* XK_Hiragana_Katakana */
+	/* XK_Muhenkan */
+	/* nothing */
+	kMT_KP_Enter, /* XK_KP_Enter MKC_formac_Enter */
+	kMT_Control_R, /* XK_Control_R MKC_formac_RControl */
+	kMT_KP_Divide, /* XK_KP_Divide MKC_KPDevide */
+#ifdef XK_Print
+	kMT_Print, /* XK_Print MKC_Print */
 #endif
-#ifdef XK_Help
-	KC2MKCAssignOne(XK_Help, MKC_formac_Help);
-#endif
+	kMT_Alt_R, /* XK_Alt_R MKC_formac_RCommand */
+	/* XK_Linefeed */
 #ifdef XK_Home
-	KC2MKCAssignOne(XK_Home, MKC_formac_Home);
+	kMT_Home, /* XK_Home MKC_formac_Home */
 #endif
-#ifdef XK_End
-	KC2MKCAssignOne(XK_End, MKC_formac_End);
-#endif
+	kMT_Up, /* XK_Up MKC_Up */
 
 #ifdef XK_Page_Up
-	KC2MKCAssignOne(XK_Page_Up, MKC_formac_PageUp);
+	kMT_Page_Up, /* XK_Page_Up MKC_formac_PageUp */
 #else
 #ifdef XK_Prior
-	KC2MKCAssignOne(XK_Prior, MKC_formac_PageUp);
+	kMT_Prior, /* XK_Prior MKC_formac_PageUp */
 #endif
 #endif
+
+	kMT_Left, /* XK_Left MKC_Left */
+	kMT_Right, /* XK_Right MKC_Right */
+#ifdef XK_End
+	kMT_End, /* XK_End MKC_formac_End */
+#endif
+	kMT_Down, /* XK_Down MKC_Down */
 
 #ifdef XK_Page_Down
-	KC2MKCAssignOne(XK_Page_Down, MKC_formac_PageDown);
+	kMT_Page_Down, /* XK_Page_Down MKC_formac_PageDown */
 #else
 #ifdef XK_Next
-	KC2MKCAssignOne(XK_Next, MKC_formac_PageDown);
+	kMT_Next, /* XK_Next MKC_formac_PageDown */
 #endif
 #endif
 
-#ifdef XK_Print
-	KC2MKCAssignOne(XK_Print, MKC_Print);
+#ifdef XK_Insert
+	kMT_Insert, /* XK_Insert MKC_formac_Help */
 #endif
-#ifdef XK_Scroll_Lock
-	KC2MKCAssignOne(XK_Scroll_Lock, MKC_ScrollLock);
+#ifdef XK_Delete
+	kMT_Delete, /* XK_Delete MKC_formac_ForwardDel */
 #endif
+	/* nothing */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	kMT_KP_Equal, /* XK_KP_Equal MKC_KPEqual */
+	/* XK_plusminus */
 #ifdef XK_Pause
-	KC2MKCAssignOne(XK_Pause, MKC_Pause);
+	kMT_Pause, /* XK_Pause MKC_Pause */
 #endif
+#ifdef XK_F15
+	kMT_F15, /* XK_F15 MKC_Pause */
+#endif
+	/* ? */
+	kMT_KP_Decimal, /* XK_KP_Decimal MKC_Decimal */
+	/* XK_Hangul */
+	/* XK_Hangul_Hanja */
+	/* nothing */
+	kMT_Super_L, /* XK_Super_L MKC_formac_Option */
+	kMT_Super_R, /* XK_Super_R MKC_formac_ROption */
+	kMT_Menu, /* XK_Menu MKC_formac_Option */
+	/* XK_Cancel */
+	/* XK_Redo */
+	/* ? */
+	/* XK_Undo */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* XK_Find */
+	/* ? */
+#ifdef XK_Help
+	kMT_Help, /* XK_Help MKC_formac_Help */
+#endif
+	/* ? */
+	/* ? */
+	/* nothing */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* nothing */
 
-	KC2MKCAssignOne(XK_KP_Add, MKC_KPAdd);
-	KC2MKCAssignOne(XK_KP_Subtract, MKC_KPSubtract);
-	KC2MKCAssignOne(XK_KP_Multiply, MKC_KPMultiply);
-	KC2MKCAssignOne(XK_KP_Divide, MKC_KPDevide);
-	KC2MKCAssignOne(XK_KP_Enter, MKC_formac_Enter);
-	KC2MKCAssignOne(XK_KP_Equal, MKC_KPEqual);
+	/* XK_parenleft */
+	/* XK_parenright */
 
-	KC2MKCAssignOne(XK_KP_0, MKC_KP0);
-	KC2MKCAssignOne(XK_KP_1, MKC_KP1);
-	KC2MKCAssignOne(XK_KP_2, MKC_KP2);
-	KC2MKCAssignOne(XK_KP_3, MKC_KP3);
-	KC2MKCAssignOne(XK_KP_4, MKC_KP4);
-	KC2MKCAssignOne(XK_KP_5, MKC_KP5);
-	KC2MKCAssignOne(XK_KP_6, MKC_KP6);
-	KC2MKCAssignOne(XK_KP_7, MKC_KP7);
-	KC2MKCAssignOne(XK_KP_8, MKC_KP8);
-	KC2MKCAssignOne(XK_KP_9, MKC_KP9);
-	KC2MKCAssignOne(XK_KP_Decimal, MKC_Decimal);
+	/* XK_Mode_switch */
 
-	KC2MKCAssignOne(XK_Left, MKC_Left);
-	KC2MKCAssignOne(XK_Right, MKC_Right);
-	KC2MKCAssignOne(XK_Up, MKC_Up);
-	KC2MKCAssignOne(XK_Down, MKC_Down);
 
-	KC2MKCAssignOne(XK_grave, MKC_formac_Grave);
-	KC2MKCAssignOne(XK_minus, MKC_Minus);
-	KC2MKCAssignOne(XK_equal, MKC_Equal);
-	KC2MKCAssignOne(XK_bracketleft, MKC_LeftBracket);
-	KC2MKCAssignOne(XK_bracketright, MKC_RightBracket);
-	KC2MKCAssignOne(XK_backslash, MKC_formac_BackSlash);
-	KC2MKCAssignOne(XK_semicolon, MKC_SemiColon);
-	KC2MKCAssignOne(XK_apostrophe, MKC_SingleQuote);
-	KC2MKCAssignOne(XK_comma, MKC_Comma);
-	KC2MKCAssignOne(XK_period, MKC_Period);
-	KC2MKCAssignOne(XK_slash, MKC_formac_Slash);
 
-	KC2MKCAssignOne(XK_Escape, MKC_formac_Escape);
+	kMT_Meta_L, /* XK_Meta_L MKC_formac_Command */
+	kMT_Meta_R, /* XK_Meta_R MKC_formac_RCommand */
 
-	KC2MKCAssignOne(XK_Tab, MKC_Tab);
-	KC2MKCAssignOne(XK_Return, MKC_Return);
-	KC2MKCAssignOne(XK_space, MKC_Space);
-	KC2MKCAssignOne(XK_BackSpace, MKC_BackSpace);
+	kMT_Mode_switch, /* XK_Mode_switch MKC_formac_Option */
+	kMT_Hyper_L, /* XK_Hyper_L MKC_formac_Option */
+	kMT_Hyper_R, /* XK_Hyper_R MKC_formac_ROption */
 
-	KC2MKCAssignOne(XK_Caps_Lock, MKC_formac_CapsLock);
-	KC2MKCAssignOne(XK_Num_Lock, MKC_Clear);
-
-	KC2MKCAssignOne(XK_Meta_L, MKC_formac_Command);
-
-	KC2MKCAssignOne(XK_Meta_R, MKC_formac_RCommand);
-
-	KC2MKCAssignOne(XK_Mode_switch, MKC_formac_Option);
-	KC2MKCAssignOne(XK_Menu, MKC_formac_Option);
-	KC2MKCAssignOne(XK_Super_L, MKC_formac_Option);
-	KC2MKCAssignOne(XK_Super_R, MKC_formac_ROption);
-	KC2MKCAssignOne(XK_Hyper_L, MKC_formac_Option);
-	KC2MKCAssignOne(XK_Hyper_R, MKC_formac_ROption);
-
-	KC2MKCAssignOne(XK_F13, MKC_formac_Option);
+	kMT_F13, /* XK_F13 MKC_formac_Option */
 		/*
 			seen being used in Mandrake Linux 9.2
 			for windows key
 		*/
 
-	KC2MKCAssignOne(XK_Shift_L, MKC_formac_Shift);
-	KC2MKCAssignOne(XK_Shift_R, MKC_formac_RShift);
+	kNumMTs
+};
 
-	KC2MKCAssignOne(XK_Alt_L, MKC_formac_Command);
+/*
+	MT2KeySym was generated by a script from
+	enum and comments above.
+*/
+LOCALVAR const KeySym MT2KeySym[kNumMTs + 1] = {
+	XK_Escape, /* kMT_Escape */
+	XK_1, /* kMT_1 */
+	XK_2, /* kMT_2 */
+	XK_3, /* kMT_3 */
+	XK_4, /* kMT_4 */
+	XK_5, /* kMT_5 */
+	XK_6, /* kMT_6 */
+	XK_7, /* kMT_7 */
+	XK_8, /* kMT_8 */
+	XK_9, /* kMT_9 */
+	XK_0, /* kMT_0 */
+	XK_minus, /* kMT_minus */
+	XK_underscore, /* kMT_underscore */
+	XK_equal, /* kMT_equal */
+	XK_plus, /* kMT_plus */
+	XK_BackSpace, /* kMT_BackSpace */
+	XK_Tab, /* kMT_Tab */
+	XK_q, /* kMT_q */
+	XK_Q, /* kMT_Q */
+	XK_w, /* kMT_w */
+	XK_W, /* kMT_W */
+	XK_e, /* kMT_e */
+	XK_E, /* kMT_E */
+	XK_r, /* kMT_r */
+	XK_R, /* kMT_R */
+	XK_t, /* kMT_t */
+	XK_T, /* kMT_T */
+	XK_y, /* kMT_y */
+	XK_Y, /* kMT_Y */
+	XK_u, /* kMT_u */
+	XK_U, /* kMT_U */
+	XK_i, /* kMT_i */
+	XK_I, /* kMT_I */
+	XK_o, /* kMT_o */
+	XK_O, /* kMT_O */
+	XK_p, /* kMT_p */
+	XK_P, /* kMT_P */
+	XK_bracketleft, /* kMT_bracketleft */
+	XK_braceleft, /* kMT_braceleft */
+	XK_bracketright, /* kMT_bracketright */
+	XK_braceright, /* kMT_braceright */
+	XK_Return, /* kMT_Return */
+	XK_Control_L, /* kMT_Control_L */
+	XK_a, /* kMT_a */
+	XK_A, /* kMT_A */
+	XK_s, /* kMT_s */
+	XK_S, /* kMT_S */
+	XK_d, /* kMT_d */
+	XK_D, /* kMT_D */
+	XK_f, /* kMT_f */
+	XK_F, /* kMT_F */
+	XK_g, /* kMT_g */
+	XK_G, /* kMT_G */
+	XK_h, /* kMT_h */
+	XK_H, /* kMT_H */
+	XK_j, /* kMT_j */
+	XK_J, /* kMT_J */
+	XK_k, /* kMT_k */
+	XK_K, /* kMT_K */
+	XK_l, /* kMT_l */
+	XK_L, /* kMT_L */
+	XK_semicolon, /* kMT_semicolon */
+	XK_colon, /* kMT_colon */
+	XK_apostrophe, /* kMT_apostrophe */
+	XK_quotedbl, /* kMT_quotedbl */
+	XK_grave, /* kMT_grave */
+	XK_asciitilde, /* kMT_asciitilde */
+	XK_Shift_L, /* kMT_Shift_L */
+	XK_backslash, /* kMT_backslash */
+	XK_bar, /* kMT_bar */
+	XK_z, /* kMT_z */
+	XK_Z, /* kMT_Z */
+	XK_x, /* kMT_x */
+	XK_X, /* kMT_X */
+	XK_c, /* kMT_c */
+	XK_C, /* kMT_C */
+	XK_v, /* kMT_v */
+	XK_V, /* kMT_V */
+	XK_b, /* kMT_b */
+	XK_B, /* kMT_B */
+	XK_n, /* kMT_n */
+	XK_N, /* kMT_N */
+	XK_m, /* kMT_m */
+	XK_M, /* kMT_M */
+	XK_comma, /* kMT_comma */
+	XK_period, /* kMT_period */
+	XK_greater, /* kMT_greater */
+	XK_slash, /* kMT_slash */
+	XK_question, /* kMT_question */
+	XK_Shift_R, /* kMT_Shift_R */
+	XK_KP_Multiply, /* kMT_KP_Multiply */
+	XK_Alt_L, /* kMT_Alt_L */
+	XK_space, /* kMT_space */
+	XK_Caps_Lock, /* kMT_Caps_Lock */
+	XK_F1, /* kMT_F1 */
+	XK_F2, /* kMT_F2 */
+	XK_F3, /* kMT_F3 */
+	XK_F4, /* kMT_F4 */
+	XK_F5, /* kMT_F5 */
+	XK_F6, /* kMT_F6 */
+	XK_F7, /* kMT_F7 */
+	XK_F8, /* kMT_F8 */
+	XK_F9, /* kMT_F9 */
+	XK_F10, /* kMT_F10 */
+	XK_Num_Lock, /* kMT_Num_Lock */
+#ifdef XK_Scroll_Lock
+	XK_Scroll_Lock, /* kMT_Scroll_Lock */
+#endif
+#ifdef XK_F14
+	XK_F14, /* kMT_F14 */
+#endif
 
-	KC2MKCAssignOne(XK_Alt_R, MKC_formac_RCommand);
+	XK_KP_7, /* kMT_KP_7 */
+#ifdef XK_KP_Home
+	XK_KP_Home, /* kMT_KP_Home */
+#endif
 
-	KC2MKCAssignOne(XK_Control_L, MKC_formac_Control);
+	XK_KP_8, /* kMT_KP_8 */
+#ifdef XK_KP_Up
+	XK_KP_Up, /* kMT_KP_Up */
+#endif
 
-	KC2MKCAssignOne(XK_Control_R, MKC_formac_RControl);
+	XK_KP_9, /* kMT_KP_9 */
+#ifdef XK_KP_Page_Up
+	XK_KP_Page_Up, /* kMT_KP_Page_Up */
+#else
+#ifdef XK_KP_Prior
+	XK_KP_Prior, /* kMT_KP_Prior */
+#endif
+#endif
 
-	KC2MKCAssignOne(XK_1, MKC_1);
-	KC2MKCAssignOne(XK_2, MKC_2);
-	KC2MKCAssignOne(XK_3, MKC_3);
-	KC2MKCAssignOne(XK_4, MKC_4);
-	KC2MKCAssignOne(XK_5, MKC_5);
-	KC2MKCAssignOne(XK_6, MKC_6);
-	KC2MKCAssignOne(XK_7, MKC_7);
-	KC2MKCAssignOne(XK_8, MKC_8);
-	KC2MKCAssignOne(XK_9, MKC_9);
-	KC2MKCAssignOne(XK_0, MKC_0);
+	XK_KP_Subtract, /* kMT_KP_Subtract */
 
-	KC2MKCAssignOne(XK_A, MKC_A);
-	KC2MKCAssignOne(XK_B, MKC_B);
-	KC2MKCAssignOne(XK_C, MKC_C);
-	KC2MKCAssignOne(XK_D, MKC_D);
-	KC2MKCAssignOne(XK_E, MKC_E);
-	KC2MKCAssignOne(XK_F, MKC_F);
-	KC2MKCAssignOne(XK_G, MKC_G);
-	KC2MKCAssignOne(XK_H, MKC_H);
-	KC2MKCAssignOne(XK_I, MKC_I);
-	KC2MKCAssignOne(XK_J, MKC_J);
-	KC2MKCAssignOne(XK_K, MKC_K);
-	KC2MKCAssignOne(XK_L, MKC_L);
-	KC2MKCAssignOne(XK_M, MKC_M);
-	KC2MKCAssignOne(XK_N, MKC_N);
-	KC2MKCAssignOne(XK_O, MKC_O);
-	KC2MKCAssignOne(XK_P, MKC_P);
-	KC2MKCAssignOne(XK_Q, MKC_Q);
-	KC2MKCAssignOne(XK_R, MKC_R);
-	KC2MKCAssignOne(XK_S, MKC_S);
-	KC2MKCAssignOne(XK_T, MKC_T);
-	KC2MKCAssignOne(XK_U, MKC_U);
-	KC2MKCAssignOne(XK_V, MKC_V);
-	KC2MKCAssignOne(XK_W, MKC_W);
-	KC2MKCAssignOne(XK_X, MKC_X);
-	KC2MKCAssignOne(XK_Y, MKC_Y);
-	KC2MKCAssignOne(XK_Z, MKC_Z);
+	XK_KP_4, /* kMT_KP_4 */
+#ifdef XK_KP_Left
+	XK_KP_Left, /* kMT_KP_Left */
+#endif
 
-	TheCapsLockCode = XKeysymToKeycode(x_display, XK_Caps_Lock);
+	XK_KP_5, /* kMT_KP_5 */
+#ifdef XK_KP_Begin
+	XK_KP_Begin, /* kMT_KP_Begin */
+#endif
+
+	XK_KP_6, /* kMT_KP_6 */
+#ifdef XK_KP_Right
+	XK_KP_Right, /* kMT_KP_Right */
+#endif
+
+	XK_KP_Add, /* kMT_KP_Add */
+
+	XK_KP_1, /* kMT_KP_1 */
+#ifdef XK_KP_End
+	XK_KP_End, /* kMT_KP_End */
+#endif
+
+	XK_KP_2, /* kMT_KP_2 */
+#ifdef XK_KP_Down
+	XK_KP_Down, /* kMT_KP_Down */
+#endif
+
+	XK_KP_3, /* kMT_KP_3 */
+#ifdef XK_Page_Down
+	XK_KP_Page_Down, /* kMT_KP_Page_Down */
+#else
+#ifdef XK_KP_Next
+	XK_KP_Next, /* kMT_KP_Next */
+#endif
+#endif
+
+	XK_KP_0, /* kMT_KP_0 */
+#ifdef XK_KP_Insert
+	XK_KP_Insert, /* kMT_KP_Insert */
+#endif
+#ifdef XK_KP_Delete
+	XK_KP_Delete, /* kMT_KP_Delete */
+#endif
+
+	/* XK_ISO_Level3_Shift */
+	/* nothing */
+#ifdef XK_less
+	XK_less, /* kMT_less */
+#endif
+	XK_F11, /* kMT_F11 */
+	XK_F12, /* kMT_F12 */
+	/* nothing */
+	/* XK_Katakana */
+	/* XK_Hiragana */
+	/* XK_Henkan */
+	/* XK_Hiragana_Katakana */
+	/* XK_Muhenkan */
+	/* nothing */
+	XK_KP_Enter, /* kMT_KP_Enter */
+	XK_Control_R, /* kMT_Control_R */
+	XK_KP_Divide, /* kMT_KP_Divide */
+#ifdef XK_Print
+	XK_Print, /* kMT_Print */
+#endif
+	XK_Alt_R, /* kMT_Alt_R */
+	/* XK_Linefeed */
+#ifdef XK_Home
+	XK_Home, /* kMT_Home */
+#endif
+	XK_Up, /* kMT_Up */
+
+#ifdef XK_Page_Up
+	XK_Page_Up, /* kMT_Page_Up */
+#else
+#ifdef XK_Prior
+	XK_Prior, /* kMT_Prior */
+#endif
+#endif
+
+	XK_Left, /* kMT_Left */
+	XK_Right, /* kMT_Right */
+#ifdef XK_End
+	XK_End, /* kMT_End */
+#endif
+	XK_Down, /* kMT_Down */
+
+#ifdef XK_Page_Down
+	XK_Page_Down, /* kMT_Page_Down */
+#else
+#ifdef XK_Next
+	XK_Next, /* kMT_Next */
+#endif
+#endif
+
+#ifdef XK_Insert
+	XK_Insert, /* kMT_Insert */
+#endif
+#ifdef XK_Delete
+	XK_Delete, /* kMT_Delete */
+#endif
+	/* nothing */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	XK_KP_Equal, /* kMT_KP_Equal */
+	/* XK_plusminus */
+#ifdef XK_Pause
+	XK_Pause, /* kMT_Pause */
+#endif
+#ifdef XK_F15
+	XK_F15, /* kMT_F15 */
+#endif
+	/* ? */
+	XK_KP_Decimal, /* kMT_KP_Decimal */
+	/* XK_Hangul */
+	/* XK_Hangul_Hanja */
+	/* nothing */
+	XK_Super_L, /* kMT_Super_L */
+	XK_Super_R, /* kMT_Super_R */
+	XK_Menu, /* kMT_Menu */
+	/* XK_Cancel */
+	/* XK_Redo */
+	/* ? */
+	/* XK_Undo */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* XK_Find */
+	/* ? */
+#ifdef XK_Help
+	XK_Help, /* kMT_Help */
+#endif
+	/* ? */
+	/* ? */
+	/* nothing */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* nothing */
+
+	/* XK_parenleft */
+	/* XK_parenright */
+
+	/* XK_Mode_switch */
+
+
+
+	XK_Meta_L, /* kMT_Meta_L */
+	XK_Meta_R, /* kMT_Meta_R */
+
+	XK_Mode_switch, /* kMT_Mode_switch */
+	XK_Hyper_L, /* kMT_Hyper_L */
+	XK_Hyper_R, /* kMT_Hyper_R */
+
+	XK_F13, /* kMT_F13 */
+		/*
+			seen being used in Mandrake Linux 9.2
+			for windows key
+		*/
+
+	0 /* just so last above line can end in ',' */
+};
+
+/*
+	MT2MKC was generated by a script from
+	enum and comments above.
+*/
+LOCALVAR const ui3r MT2MKC[kNumMTs + 1] = {
+	MKC_formac_Escape, /* kMT_Escape */
+	MKC_1, /* kMT_1 */
+	MKC_2, /* kMT_2 */
+	MKC_3, /* kMT_3 */
+	MKC_4, /* kMT_4 */
+	MKC_5, /* kMT_5 */
+	MKC_6, /* kMT_6 */
+	MKC_7, /* kMT_7 */
+	MKC_8, /* kMT_8 */
+	MKC_9, /* kMT_9 */
+	MKC_0, /* kMT_0 */
+	MKC_Minus, /* kMT_minus */
+	MKC_Minus, /* kMT_underscore */
+	MKC_Equal, /* kMT_equal */
+	MKC_Equal, /* kMT_plus */
+	MKC_BackSpace, /* kMT_BackSpace */
+	MKC_Tab, /* kMT_Tab */
+	MKC_Q, /* kMT_q */
+	MKC_Q, /* kMT_Q */
+	MKC_W, /* kMT_w */
+	MKC_W, /* kMT_W */
+	MKC_E, /* kMT_e */
+	MKC_E, /* kMT_E */
+	MKC_R, /* kMT_r */
+	MKC_R, /* kMT_R */
+	MKC_T, /* kMT_t */
+	MKC_T, /* kMT_T */
+	MKC_Y, /* kMT_y */
+	MKC_Y, /* kMT_Y */
+	MKC_U, /* kMT_u */
+	MKC_U, /* kMT_U */
+	MKC_I, /* kMT_i */
+	MKC_I, /* kMT_I */
+	MKC_O, /* kMT_o */
+	MKC_O, /* kMT_O */
+	MKC_P, /* kMT_p */
+	MKC_P, /* kMT_P */
+	MKC_LeftBracket, /* kMT_bracketleft */
+	MKC_LeftBracket, /* kMT_braceleft */
+	MKC_RightBracket, /* kMT_bracketright */
+	MKC_RightBracket, /* kMT_braceright */
+	MKC_Return, /* kMT_Return */
+	MKC_formac_Control, /* kMT_Control_L */
+	MKC_A, /* kMT_a */
+	MKC_A, /* kMT_A */
+	MKC_S, /* kMT_s */
+	MKC_S, /* kMT_S */
+	MKC_D, /* kMT_d */
+	MKC_D, /* kMT_D */
+	MKC_F, /* kMT_f */
+	MKC_F, /* kMT_F */
+	MKC_G, /* kMT_g */
+	MKC_G, /* kMT_G */
+	MKC_H, /* kMT_h */
+	MKC_H, /* kMT_H */
+	MKC_J, /* kMT_j */
+	MKC_J, /* kMT_J */
+	MKC_K, /* kMT_k */
+	MKC_K, /* kMT_K */
+	MKC_L, /* kMT_l */
+	MKC_L, /* kMT_L */
+	MKC_SemiColon, /* kMT_semicolon */
+	MKC_SemiColon, /* kMT_colon */
+	MKC_SingleQuote, /* kMT_apostrophe */
+	MKC_SingleQuote, /* kMT_quotedbl */
+	MKC_formac_Grave, /* kMT_grave */
+	MKC_formac_Grave, /* kMT_asciitilde */
+	MKC_formac_Shift, /* kMT_Shift_L */
+	MKC_formac_BackSlash, /* kMT_backslash */
+	MKC_formac_BackSlash, /* kMT_bar */
+	MKC_Z, /* kMT_z */
+	MKC_Z, /* kMT_Z */
+	MKC_X, /* kMT_x */
+	MKC_X, /* kMT_X */
+	MKC_C, /* kMT_c */
+	MKC_C, /* kMT_C */
+	MKC_V, /* kMT_v */
+	MKC_V, /* kMT_V */
+	MKC_B, /* kMT_b */
+	MKC_B, /* kMT_B */
+	MKC_N, /* kMT_n */
+	MKC_N, /* kMT_N */
+	MKC_M, /* kMT_m */
+	MKC_M, /* kMT_M */
+	MKC_Comma, /* kMT_comma */
+	MKC_Period, /* kMT_period */
+	MKC_Period, /* kMT_greater */
+	MKC_formac_Slash, /* kMT_slash */
+	MKC_formac_Slash, /* kMT_question */
+	MKC_formac_RShift, /* kMT_Shift_R */
+	MKC_KPMultiply, /* kMT_KP_Multiply */
+	MKC_formac_Command, /* kMT_Alt_L */
+	MKC_Space, /* kMT_space */
+	MKC_real_CapsLock, /* kMT_Caps_Lock */
+	MKC_formac_F1, /* kMT_F1 */
+	MKC_formac_F2, /* kMT_F2 */
+	MKC_formac_F3, /* kMT_F3 */
+	MKC_formac_F4, /* kMT_F4 */
+	MKC_formac_F5, /* kMT_F5 */
+	MKC_F6, /* kMT_F6 */
+	MKC_F7, /* kMT_F7 */
+	MKC_F8, /* kMT_F8 */
+	MKC_F9, /* kMT_F9 */
+	MKC_F10, /* kMT_F10 */
+	MKC_Clear, /* kMT_Num_Lock */
+#ifdef XK_Scroll_Lock
+	MKC_ScrollLock, /* kMT_Scroll_Lock */
+#endif
+#ifdef XK_F14
+	MKC_ScrollLock, /* kMT_F14  */
+#endif
+
+	MKC_KP7, /* kMT_KP_7 */
+#ifdef XK_KP_Home
+	MKC_KP7, /* kMT_KP_Home */
+#endif
+
+	MKC_KP8, /* kMT_KP_8 */
+#ifdef XK_KP_Up
+	MKC_KP8, /* kMT_KP_Up */
+#endif
+
+	MKC_KP9, /* kMT_KP_9 */
+#ifdef XK_KP_Page_Up
+	MKC_KP9, /* kMT_KP_Page_Up */
+#else
+#ifdef XK_KP_Prior
+	MKC_KP9, /* kMT_KP_Prior */
+#endif
+#endif
+
+	MKC_KPSubtract, /* kMT_KP_Subtract */
+
+	MKC_KP4, /* kMT_KP_4 */
+#ifdef XK_KP_Left
+	MKC_KP4, /* kMT_KP_Left */
+#endif
+
+	MKC_KP5, /* kMT_KP_5 */
+#ifdef XK_KP_Begin
+	MKC_KP5, /* kMT_KP_Begin */
+#endif
+
+	MKC_KP6, /* kMT_KP_6 */
+#ifdef XK_KP_Right
+	MKC_KP6, /* kMT_KP_Right */
+#endif
+
+	MKC_KPAdd, /* kMT_KP_Add */
+
+	MKC_KP1, /* kMT_KP_1 */
+#ifdef XK_KP_End
+	MKC_KP1, /* kMT_KP_End */
+#endif
+
+	MKC_KP2, /* kMT_KP_2 */
+#ifdef XK_KP_Down
+	MKC_KP2, /* kMT_KP_Down */
+#endif
+
+	MKC_KP3, /* kMT_KP_3 */
+#ifdef XK_Page_Down
+	MKC_KP3, /* kMT_KP_Page_Down */
+#else
+#ifdef XK_KP_Next
+	MKC_KP3, /* kMT_KP_Next */
+#endif
+#endif
+
+	MKC_KP0, /* kMT_KP_0 */
+#ifdef XK_KP_Insert
+	MKC_KP0, /* kMT_KP_Insert */
+#endif
+#ifdef XK_KP_Delete
+	MKC_Decimal, /* kMT_KP_Delete */
+#endif
+
+	/* XK_ISO_Level3_Shift */
+	/* nothing */
+#ifdef XK_less
+	MKC_Comma, /* kMT_less */
+#endif
+	MKC_F11, /* kMT_F11 */
+	MKC_F12, /* kMT_F12 */
+	/* nothing */
+	/* XK_Katakana */
+	/* XK_Hiragana */
+	/* XK_Henkan */
+	/* XK_Hiragana_Katakana */
+	/* XK_Muhenkan */
+	/* nothing */
+	MKC_formac_Enter, /* kMT_KP_Enter */
+	MKC_formac_RControl, /* kMT_Control_R */
+	MKC_KPDevide, /* kMT_KP_Divide */
+#ifdef XK_Print
+	MKC_Print, /* kMT_Print */
+#endif
+	MKC_formac_RCommand, /* kMT_Alt_R */
+	/* XK_Linefeed */
+#ifdef XK_Home
+	MKC_formac_Home, /* kMT_Home */
+#endif
+	MKC_Up, /* kMT_Up */
+
+#ifdef XK_Page_Up
+	MKC_formac_PageUp, /* kMT_Page_Up */
+#else
+#ifdef XK_Prior
+	MKC_formac_PageUp, /* kMT_Prior */
+#endif
+#endif
+
+	MKC_Left, /* kMT_Left */
+	MKC_Right, /* kMT_Right */
+#ifdef XK_End
+	MKC_formac_End, /* kMT_End */
+#endif
+	MKC_Down, /* kMT_Down */
+
+#ifdef XK_Page_Down
+	MKC_formac_PageDown, /* kMT_Page_Down */
+#else
+#ifdef XK_Next
+	MKC_formac_PageDown, /* kMT_Next */
+#endif
+#endif
+
+#ifdef XK_Insert
+	MKC_formac_Help, /* kMT_Insert */
+#endif
+#ifdef XK_Delete
+	MKC_formac_ForwardDel, /* kMT_Delete */
+#endif
+	/* nothing */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	MKC_KPEqual, /* kMT_KP_Equal */
+	/* XK_plusminus */
+#ifdef XK_Pause
+	MKC_Pause, /* kMT_Pause */
+#endif
+#ifdef XK_F15
+	MKC_Pause, /* kMT_F15  */
+#endif
+	/* ? */
+	MKC_Decimal, /* kMT_KP_Decimal */
+	/* XK_Hangul */
+	/* XK_Hangul_Hanja */
+	/* nothing */
+	MKC_formac_Option, /* kMT_Super_L */
+	MKC_formac_ROption, /* kMT_Super_R */
+	MKC_formac_Option, /* kMT_Menu */
+	/* XK_Cancel */
+	/* XK_Redo */
+	/* ? */
+	/* XK_Undo */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* XK_Find */
+	/* ? */
+#ifdef XK_Help
+	MKC_formac_Help, /* kMT_Help */
+#endif
+	/* ? */
+	/* ? */
+	/* nothing */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* ? */
+	/* nothing */
+
+	/* XK_parenleft */
+	/* XK_parenright */
+
+	/* XK_Mode_switch */
+
+
+
+	MKC_formac_Command, /* kMT_Meta_L */
+	MKC_formac_RCommand, /* kMT_Meta_R */
+
+	MKC_formac_Option, /* kMT_Mode_switch */
+	MKC_formac_Option, /* kMT_Hyper_L */
+	MKC_formac_ROption, /* kMT_Hyper_R */
+
+	MKC_formac_Option, /* kMT_F13 */
+		/*
+			seen being used in Mandrake Linux 9.2
+			for windows key
+		*/
+
+	0 /* just so last above line can end in ',' */
+};
+
+LOCALVAR ui3b KC2MKC[256];
+	/*
+		translate X11 key code to Macintosh key code
+	*/
+
+#define KMInit_dolog (dbglog_HAVE && 0)
+
+LOCALFUNC blnr KC2MKCInit(void)
+{
+	int i;
+	int j;
+	int last_j;
+	int first_keycode;
+	int last_keycode;
+	int keysyms_per_keycode;
+	KeySym *KeyMap;
+	KeySym MaxUsedKeySym;
+
+	/*
+		In Linux, observe that most KeySyms not
+		found in our translation table are large.
+		So saves time to find largest KeySym we
+		are interested in.
+	*/
+	MaxUsedKeySym = 0;
+	for (j = 0; j < kNumMTs; j++) {
+		KeySym x = MT2KeySym[j];
+		if (x > MaxUsedKeySym) {
+			MaxUsedKeySym = x;
+		}
+	}
+
+#if KMInit_dolog
+	dbglog_writelnHex("MaxUsedKeySym", MaxUsedKeySym);
+#endif
+
+	for (i = 0; i < 256; ++i) {
+		KC2MKC[i] = MKC_None;
+	}
+
+	XDisplayKeycodes(x_display, &first_keycode, &last_keycode);
+	KeyMap = XGetKeyboardMapping(x_display,
+		first_keycode,
+		last_keycode - first_keycode + 1,
+		&keysyms_per_keycode);
+
+	last_j = kNumMTs - 1;
+
+	for (i = first_keycode; i <= last_keycode; i++) {
+		KeySym ks = KeyMap[(i - first_keycode) * keysyms_per_keycode];
+
+#if KMInit_dolog
+		dbglog_writeNum(i);
+		dbglog_writeSpace();
+		dbglog_writeHex(ks);
+		dbglog_writeSpace();
+#endif
+		if (0 == ks) {
+#if KMInit_dolog
+			dbglog_writeCStr("zero");
+#endif
+		} else
+		if (ks > MaxUsedKeySym) {
+#if KMInit_dolog
+			dbglog_writeCStr("too large");
+#endif
+		} else
+		{
+			/*
+				look up in the translation table, and try to be more
+				efficient if the order of this table is similar
+				to the order of the X11 KeyboardMapping.
+			*/
+			j = last_j;
+label_retry:
+			++j;
+			if (j >= kNumMTs) {
+				j = 0;
+			}
+
+			if (j == last_j) {
+				/* back where we started */
+#if KMInit_dolog
+				dbglog_writeCStr("not found");
+#endif
+			} else
+			if (ks != MT2KeySym[j]) {
+#if KMInit_dolog && 1
+				dbglog_writeCStr("*");
+#endif
+				goto label_retry; /* try the next one */
+			} else
+			{
+#if KMInit_dolog
+				dbglog_writeCStr("match");
+				dbglog_writeSpace();
+				dbglog_writeHex(MT2MKC[j]);
+#endif
+				KC2MKC[i] = MT2MKC[j];
+				last_j = j;
+			}
+		}
+#if KMInit_dolog
+		dbglog_writeReturn();
+#endif
+	}
+
+	XFree(KeyMap);
 
 	InitKeyCodes();
 
@@ -2170,17 +2924,32 @@ LOCALPROC CheckTheCapsLock(void)
 LOCALPROC DoKeyCode0(int i, blnr down)
 {
 	ui3r key = KC2MKC[i];
-	if (MKC_None != key) {
+
+	if (MKC_None == key) {
+		/* ignore */
+	} else
+	if (MKC_real_CapsLock == key) {
+		/* also ignore */
+	} else
+	{
 		Keyboard_UpdateKeyMap2(key, down);
 	}
 }
 
 LOCALPROC DoKeyCode(int i, blnr down)
 {
-	if (i == TheCapsLockCode) {
-		CheckTheCapsLock();
-	} else if (i >= 0 && i < 256) {
-		DoKeyCode0(i, down);
+	if ((i >= 0) && (i < 256)) {
+		ui3r key = KC2MKC[i];
+
+		if (MKC_None == key) {
+			/* ignore */
+		} else
+		if (MKC_real_CapsLock == key) {
+			CheckTheCapsLock();
+		} else
+		{
+			Keyboard_UpdateKeyMap2(key, down);
+		}
 	}
 }
 
@@ -2257,9 +3026,8 @@ LOCALPROC GetTheDownKeys(void)
 		for (j = 0; j < 8; ++j) {
 			if (0 != ((1 << j) & v)) {
 				int k = i * 8 + j;
-				if (k != TheCapsLockCode) {
-					DoKeyCode0(k, trueblnr);
-				}
+
+				DoKeyCode0(k, trueblnr);
 			}
 		}
 	}
@@ -2520,8 +3288,6 @@ LOCALPROC MySound_SecondNotify0(void)
 
 LOCALPROC CheckSavedMacMsg(void)
 {
-	/* called only on quit, if error saved but not yet reported */
-
 	if (nullpr != SavedBriefMsg) {
 		char briefMsg0[ClStrMaxLength + 1];
 		char longMsg0[ClStrMaxLength + 1];
@@ -2972,6 +3738,145 @@ LOCALPROC HandleClientMessageDndDrop(XEvent *theEvent)
 		MyXA_MinivMac_DndXchng, my_main_wind, timestamp);
 }
 #endif
+
+
+#if EmLocalTalk
+
+struct xqpr {
+		int NewMousePosh;
+		int NewMousePosv;
+		int root_x_return;
+		int root_y_return;
+		Window root_return;
+		Window child_return;
+		unsigned int mask_return;
+};
+typedef struct xqpr xqpr;
+
+
+LOCALFUNC blnr EntropyGather(void)
+{
+	/*
+		gather some entropy from several places, just in case
+		/dev/urandom is not available.
+	*/
+
+	{
+		struct timeval t;
+
+		gettimeofday(&t, NULL);
+
+		EntropyPoolAddPtr((ui3p)&t, sizeof(t) / sizeof(ui3b));
+	}
+
+	{
+		xqpr t;
+
+		XQueryPointer(x_display, my_main_wind,
+			&t.root_return, &t.child_return,
+			&t.root_x_return, &t.root_y_return,
+			&t.NewMousePosh, &t.NewMousePosv,
+			&t.mask_return);
+
+		EntropyPoolAddPtr((ui3p)&t, sizeof(t) / sizeof(ui3b));
+	}
+
+#if 0
+	/*
+		Another possible source of entropy. But if available,
+		almost certainly /dev/urandom is also available.
+	*/
+	/* #include <sys/sysinfo.h> */
+	{
+		struct sysinfo t;
+
+		if (0 != sysinfo(&t)) {
+#if dbglog_HAVE
+			dbglog_writeln("sysinfo fails");
+#endif
+		}
+
+		/*
+			continue even if error, it doesn't hurt anything
+				if t is garbage.
+		*/
+		EntropyPoolAddPtr((ui3p)&t, sizeof(t) / sizeof(ui3b));
+	}
+#endif
+
+	{
+		pid_t t = getpid();
+
+		EntropyPoolAddPtr((ui3p)&t, sizeof(t) / sizeof(ui3b));
+	}
+
+	{
+		ui5b dat[2];
+		int fd;
+
+		if (-1 == (fd = open("/dev/urandom", O_RDONLY))) {
+#if dbglog_HAVE
+			dbglog_writeCStr("open /dev/urandom fails");
+			dbglog_writeNum(errno);
+			dbglog_writeCStr(" (");
+			dbglog_writeCStr(strerror(errno));
+			dbglog_writeCStr(")");
+			dbglog_writeReturn();
+#endif
+		} else {
+
+			if (read(fd, &dat, sizeof(dat)) < 0) {
+#if dbglog_HAVE
+				dbglog_writeCStr("open /dev/urandom fails");
+				dbglog_writeNum(errno);
+				dbglog_writeCStr(" (");
+				dbglog_writeCStr(strerror(errno));
+				dbglog_writeCStr(")");
+				dbglog_writeReturn();
+#endif
+			} else {
+
+#if dbglog_HAVE
+				dbglog_writeCStr("dat: ");
+				dbglog_writeHex(dat[0]);
+				dbglog_writeCStr(" ");
+				dbglog_writeHex(dat[1]);
+				dbglog_writeReturn();
+#endif
+
+				e_p[0] ^= dat[0];
+				e_p[1] ^= dat[1];
+					/*
+						if "/dev/urandom" is working correctly,
+						this should make the previous contents of e_p
+						irrelevant. if it is completely broken, like
+						returning 0, this will not make e_p any less
+						random.
+					*/
+
+#if dbglog_HAVE
+				dbglog_writeCStr("ep: ");
+				dbglog_writeHex(e_p[0]);
+				dbglog_writeCStr(" ");
+				dbglog_writeHex(e_p[1]);
+				dbglog_writeReturn();
+#endif
+			}
+
+			close(fd);
+		}
+	}
+
+	return trueblnr;
+}
+#endif
+
+#if EmLocalTalk
+
+#include "LOCALTLK.h"
+
+#endif
+
 
 #define UseMotionEvents 1
 
@@ -4762,6 +5667,10 @@ LOCALFUNC blnr InitOSGLU(void)
 	if (Screen_Init())
 	if (CreateMainWindow())
 	if (KC2MKCInit())
+#if EmLocalTalk
+	if (EntropyGather())
+	if (InitLocalTalk())
+#endif
 	if (WaitForRom())
 	{
 		return trueblnr;
@@ -4774,6 +5683,10 @@ LOCALPROC UnInitOSGLU(void)
 	if (MacMsgDisplayed) {
 		MacMsgDisplayOff();
 	}
+
+#if EmLocalTalk
+	UnInitLocalTalk();
+#endif
 
 	RestoreKeyRepeat();
 #if MayFullScreen
@@ -4837,3 +5750,5 @@ int main(int argc, char **argv)
 
 	return 0;
 }
+
+#endif /* WantOSGLUXWN */

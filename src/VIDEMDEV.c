@@ -27,15 +27,12 @@
 		Basilisk II source code, especially slot_rom.cpp
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-#include "MYOSGLUE.h"
-#include "ENDIANAC.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
+#include "PICOMMON.h"
+
+#if EmVidCard
+
 #include "MINEM68K.h"
 #include "SONYEMDV.h"
-#endif
 
 #include "VIDEMDEV.h"
 
@@ -390,7 +387,7 @@ GLOBALFUNC blnr Vid_Init(void)
 
 	UsedSoFar = (pPatch - VidROM) + 20;
 	if (UsedSoFar > kVidROM_Size) {
-		ReportAbnormalID(0x0A01, "kVidROM_Size to small");
+		ReportAbnormalID(0x0A01, "kVidROM_Size too small");
 		return falseblnr;
 	}
 
@@ -1002,3 +999,5 @@ GLOBALPROC ExtnVideo_Access(CPTR p)
 
 	put_vm_word(p + ExtnDat_result, result);
 }
+
+#endif /* EmVidCard */

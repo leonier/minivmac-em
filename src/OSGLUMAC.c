@@ -21,24 +21,14 @@
 	All operating system dependent code for the
 	Macintosh (pre OS X) platform should go here.
 
-	This is also the "reference" implementation. General
-	comments about what the platform dependent code
-	does should go here, and not be repeated for each
-	platform.
-
 	This code is descended from Richard F. Bannister's Macintosh
 	port of vMac, by Philip Cummins.
-
-	The main entry point 'main' is at the end of this file.
 */
 
-#include "CNFGRAPI.h"
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
+#include "OSGCOMUI.h"
+#include "OSGCOMUD.h"
 
-#include "MYOSGLUE.h"
-
-#include "STRCONST.h"
+#ifdef WantOSGLUMAC
 
 #ifndef NavigationAvail
 #define NavigationAvail 1
@@ -387,10 +377,6 @@ LOCALFUNC blnr InitMacManagers(void)
 #define CheckSaveMacErr(result) (CheckSavetMacErr(To_tMacErr(result)))
 
 
-/*
-	define NotAfileRef to some value that is different
-	from any valid open file reference.
-*/
 #define NotAfileRef (-1)
 
 struct MyDir_R {
@@ -739,6 +725,9 @@ LOCALPROC dbglog_close0(void)
 #define NeedCell2MacAsciiMap 1
 
 #define WantColorTransValid 1
+#define NeedRequestInsertDisk 1
+#define NeedDoMoreCommandsMsg 1
+#define NeedDoAboutMsg 1
 
 #include "INTLCHAR.h"
 
@@ -1352,23 +1341,6 @@ LOCALPROC SetCursorArrow(void)
 /* --- cursor moving --- */
 
 /*
-	When "EnableFSMouseMotion" the platform
-	specific code can get relative mouse
-	motion, instead of absolute coordinates
-	on the emulated screen. It should
-	set HaveMouseMotion to true when
-	it is doing this (normally when in
-	full screen mode.)
-
-	This can usually be implemented by
-	hiding the platform specific cursor,
-	and then keeping it within a box,
-	moving the cursor back to the center whenever
-	it leaves the box. This requires the
-	ability to move the cursor (in MyMoveMouse).
-*/
-
-/*
 	mouse moving code (non OS X) adapted from
 	MoveMouse.c by Dan Sears, which says that
 	"Based on code from Jon Wtte, Denis Pelli,
@@ -1454,15 +1426,6 @@ pascal void CallCursorTask(void) =
 
 LOCALFUNC blnr MyMoveMouse(si4b h, si4b v)
 {
-	/*
-		Move the cursor to the point h, v
-		on the emulated screen.
-		if detect that this fails return falseblnr,
-		otherwise return trueblnr.
-		(on some platforms it is possible to
-		move the curser, but there is no
-		way to detect failure.)
-	*/
 	GrafPtr oldPort;
 	Point CurMousePos;
 	Point NewMousePos;
@@ -1724,40 +1687,16 @@ LOCALPROC DisconnectKeyCodes3(void)
 */
 
 LOCALVAR ui5b TrueEmulatedTime = 0;
-	/*
-		The amount of time the program has
-		been running, measured in Macintosh
-		"ticks". There are 60.14742 ticks per
-		second.
-
-		(time when the emulation is
-		stopped for more than a few ticks
-		should not be counted.)
-	*/
 
 LOCALVAR long int LastTime;
 
 LOCALPROC StartUpTimeAdjust(void)
 {
-	/*
-		prepare to call UpdateTrueEmulatedTime.
-
-		will be called again when haven't been
-		regularly calling UpdateTrueEmulatedTime,
-		(such as the emulation has been stopped).
-	*/
 	LastTime = TickCount();
 }
 
 LOCALPROC UpdateTrueEmulatedTime(void)
 {
-	/*
-		Update TrueEmulatedTime. usually
-		need to convert between how the
-		host operating system measures
-		time and Macintosh ticks. But
-		not for this port.
-	*/
 	long int LatestTime = TickCount();
 	si5b TimeDiff = LatestTime - LastTime;
 
@@ -1782,14 +1721,6 @@ LOCALPROC UpdateTrueEmulatedTime(void)
 
 LOCALFUNC blnr CheckDateTime(void)
 {
-	/*
-		Update CurMacDateInSeconds, the number
-		of seconds since midnight January 1, 1904.
-
-		return true if CurMacDateInSeconds is
-		different than it was on the last
-		call to CheckDateTime.
-	*/
 	ui5b NewMacDateInSecond;
 
 	NewMacDateInSecond = My_LMGetTime();
@@ -2436,11 +2367,6 @@ LOCALPROC MyEndDialog(void)
 
 LOCALPROC CheckSavedMacMsg(void)
 {
-	/*
-		This is currently only used in the
-		rare case where there is a message
-		still pending as the program quits.
-	*/
 	Str255 briefMsgp;
 	Str255 longMsgp;
 
@@ -2692,20 +2618,6 @@ GLOBALOSGLUPROC PbufTransfer(ui3p Buffer,
 #if IncludeHostTextClipExchange
 GLOBALOSGLUFUNC tMacErr HTCEexport(tPbuf i)
 {
-	/*
-		PBuf i is an array of macintosh
-		style characters. (using the
-		MacRoman character set.)
-
-		Should export this Buffer to the
-		native clipboard, performing character
-		set translation, and eof character translation
-		as needed. (Not needed for this port.)
-
-		return 0 if it succeeds, nonzero (a
-		Macintosh style error code, but -1
-		will do) on failure.
-	*/
 	OSErr err;
 
 	err = ZeroScrap();
@@ -2726,16 +2638,6 @@ GLOBALOSGLUFUNC tMacErr HTCEexport(tPbuf i)
 #if IncludeHostTextClipExchange
 GLOBALOSGLUFUNC tMacErr HTCEimport(tPbuf *r)
 {
-	/*
-		Import the native clipboard as text,
-		and convert it to Macintosh format,
-		in a Pbuf.
-
-		return 0 if it succeeds, nonzero (a
-		Macintosh style error code, but -1
-		will do) on failure.
-	*/
-
 	long off;
 	long v;
 	Handle h;
@@ -2786,11 +2688,6 @@ GLOBALOSGLUFUNC tMacErr vSonyTransfer(blnr IsWrite, ui3p Buffer,
 	tDrive Drive_No, ui5r Sony_Start, ui5r Sony_Count,
 	ui5r *Sony_ActCount)
 {
-	/*
-		return 0 if it succeeds, nonzero (a
-		Macintosh style error code, but -1
-		will do) on failure.
-	*/
 	tMacErr result;
 	ui5r NewSony_Count = Sony_Count;
 
@@ -2825,25 +2722,11 @@ GLOBALOSGLUFUNC tMacErr vSonyTransfer(blnr IsWrite, ui3p Buffer,
 
 GLOBALOSGLUFUNC tMacErr vSonyGetSize(tDrive Drive_No, ui5r *Sony_Count)
 {
-	/*
-		set Sony_Count to the size of disk image number Drive_No.
-
-		return 0 if it succeeds, nonzero (a
-		Macintosh style error code, but -1
-		will do) on failure.
-	*/
 	return GetEOF(Drives[Drive_No], (long *)Sony_Count);
 }
 
 LOCALFUNC OSErr vSonyEject0(tDrive Drive_No)
 {
-	/*
-		close disk image number Drive_No.
-
-		return 0 if it succeeds, nonzero (a
-		Macintosh style error code, but -1
-		will do) on failure.
-	*/
 	short refnum = Drives[Drive_No];
 	Drives[Drive_No] = NotAfileRef; /* not really needed */
 
@@ -2985,12 +2868,6 @@ GLOBALOSGLUFUNC tMacErr vSonyGetName(tDrive Drive_No, tPbuf *r)
 
 LOCALFUNC tMacErr Sony_Insert0(short refnum, blnr locked, ps3p s)
 {
-	/*
-		Given reference to open file, mount it as
-		a disk image file. if "locked", then mount
-		it as a locked disk.
-	*/
-
 	tDrive Drive_No;
 
 #if ! ((IncludeSonyGetName || IncludeSonyNew) && HaveCPUfamM68K)
@@ -4481,10 +4358,6 @@ LOCALPROC ZapMyWState(void)
 
 LOCALPROC CloseMainWindow(void)
 {
-	/*
-		Dispose of anything set up by CreateMainWindow.
-	*/
-
 #if EnableDragDrop
 	UnPrepareForDragging();
 #endif
@@ -4513,17 +4386,6 @@ LOCALVAR Point WinPositionWins[kNumMagStates];
 
 LOCALFUNC blnr CreateMainWindow(void)
 {
-	/*
-		Set up somewhere for us to draw the emulated screen and
-		receive mouse input. i.e. usually a window, as is the case
-		for this port.
-
-		The window should not be resizeable.
-
-		Should look at the current value of UseMagnify and
-		UseFullScreen.
-
-	*/
 #if MayNotFullScreen
 	int WinIndx;
 #endif
@@ -4766,21 +4628,6 @@ LOCALPROC SetMyWState(MyWState *r)
 
 LOCALFUNC blnr ReCreateMainWindow(void)
 {
-	/*
-		Like CreateMainWindow (which it calls), except may be
-		called when already have window, without CloseMainWindow
-		being called first. (Usually with different
-		values of WantMagnify and WantFullScreen than
-		on the previous call.)
-
-		If there is existing window, and fail to create
-		the new one, then existing window must be left alone,
-		in valid state. (and return falseblnr. otherwise,
-		if succeed, return trueblnr)
-
-		i.e. can allocate the new one before disposing
-		of the old one.
-	*/
 	MyWState old_state;
 	MyWState new_state;
 
@@ -5371,12 +5218,6 @@ LOCALPROC DontWaitForEvent(void)
 
 LOCALPROC CheckForSystemEvents(void)
 {
-	/*
-		Handle any events that are waiting for us.
-		Return immediately when no more events
-		are waiting, don't wait for more.
-	*/
-
 #if HogCPU && MayFullScreen
 	/*
 		only hog cpu in full screen mode
@@ -5603,13 +5444,6 @@ LOCALFUNC blnr InstallOurEventHandlers(void)
 
 LOCALPROC ZapOSGLUVars(void)
 {
-	/*
-		Set initial values of variables for
-		platform dependent code, where not
-		done using c initializers. (such
-		as for arrays.)
-	*/
-
 	ZapEmKeys();
 	InitDrives();
 	ZapWinStateVars();
@@ -5670,11 +5504,6 @@ LOCALFUNC blnr AllocMyMemory(void)
 
 LOCALFUNC blnr InitOSGLU(void)
 {
-	/*
-		run all the initializations
-		needed for the program.
-	*/
-
 	if (InitMacManagers())
 	if (AllocMyMemory())
 	if (InitMyApplInfo())
@@ -5705,11 +5534,6 @@ LOCALFUNC blnr InitOSGLU(void)
 
 LOCALPROC UnInitOSGLU(void)
 {
-	/*
-		Do all clean ups needed
-		before the program quits.
-	*/
-
 	if (MacMsgDisplayed) {
 		MacMsgDisplayOff();
 	}
@@ -5773,3 +5597,5 @@ main(void)
 	return 0;
 #endif
 }
+
+#endif /* WantOSGLUMAC */

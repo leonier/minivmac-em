@@ -30,19 +30,12 @@
 		(this code now located in "FPCPEMDV.h")
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-
-#include "MYOSGLUE.h"
-#include "ENDIANAC.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
+#include "PICOMMON.h"
 
 #include "M68KITAB.h"
 
 #if WantDisasm
 #include "DISAM68K.h"
-#endif
 #endif
 
 #include "MINEM68K.h"
@@ -2934,7 +2927,7 @@ FORWARDPROC my_reg_call cctrue_Dflt(cond_actP t_act, cond_actP f_act);
 #if UseLazyCC
 #define CCdispSz (16 * kNumLazyFlagsKinds)
 #else
-#define CCdispSz kNumLazyFlagsKinds
+#define CCdispSz 16
 #endif
 
 typedef void (my_reg_call *cctrueP)(cond_actP t_act, cond_actP f_act);
@@ -6680,7 +6673,7 @@ LOCALIPROC DoCodeMoveP0(void)
 		/* shouldn't this sign extend ? */
 	CPTR memp = *srcp + Displacement;
 
-	ui4b val = ((get_byte(memp) & 0x00FF) << 8)
+	ui4r val = ((get_byte(memp) & 0x00FF) << 8)
 		| (get_byte(memp + 2) & 0x00FF);
 
 	*dstp =
@@ -6707,7 +6700,7 @@ LOCALIPROC DoCodeMoveP1(void)
 		/* shouldn't this sign extend ? */
 	CPTR memp = *srcp + Displacement;
 
-	ui5b val = ((get_byte(memp) & 0x00FF) << 24)
+	ui5r val = ((get_byte(memp) & 0x00FF) << 24)
 		| ((get_byte(memp + 2) & 0x00FF) << 16)
 		| ((get_byte(memp + 4) & 0x00FF) << 8)
 		| (get_byte(memp + 6) & 0x00FF);
@@ -6727,7 +6720,7 @@ LOCALIPROC DoCodeMoveP2(void)
 		/* shouldn't this sign extend ? */
 	CPTR memp = *srcp + Displacement;
 
-	si4b val = *dstp;
+	ui4r val = *dstp;
 
 	put_byte(memp, val >> 8);
 	put_byte(memp + 2, val);
@@ -6745,7 +6738,7 @@ LOCALIPROC DoCodeMoveP3(void)
 		/* shouldn't this sign extend ? */
 	CPTR memp = *srcp + Displacement;
 
-	si5b val = *dstp;
+	ui5r val = *dstp;
 
 	put_byte(memp, val >> 24);
 	put_byte(memp + 2, val >> 16);
@@ -6922,7 +6915,7 @@ FORWARDPROC local_customreset(void);
 
 LOCALIPROC DoCodeReset(void)
 {
-	/* Reset 0100111001100000 */
+	/* Reset 0100111001110000 */
 	if (0 == V_regs.s) {
 		DoPrivilegeViolation();
 	} else {
@@ -6946,7 +6939,7 @@ LOCALIPROC DoCodeMoveCCREa(void)
 }
 #endif
 
-#if Use68020
+#if Use68020 || EmFPU
 LOCALIPROC DoCodeBraL(void)
 {
 	/* Bra 0110ccccnnnnnnnn */
@@ -6965,7 +6958,7 @@ LOCALIPROC DoCodeBraL(void)
 }
 #endif
 
-#if Use68020
+#if Use68020 || EmFPU
 LOCALPROC SkipiLong(void)
 {
 	V_pc_p += 4;
@@ -7847,7 +7840,7 @@ LOCALIPROC DoBitField(void)
 	if (width != 0) {
 		tmp >>= (32 - width);
 	}
-	ZFLG = tmp == 0;
+	ZFLG = (tmp == 0);
 	VFLG = 0;
 	CFLG = 0;
 
@@ -7898,6 +7891,21 @@ LOCALIPROC DoBitField(void)
 			newtmp = m68k_dreg((extra >> 12) & 7);
 			if (width != 0) {
 				newtmp &= ((1 << width) - 1);
+			}
+
+			/*
+				flags set from new value
+				unlike BFSET/BFCLR/BFCHG
+			*/
+			{
+				ui5b t = newtmp;
+
+				if (width != 0) {
+					t <<= (32 - width);
+				}
+
+				NFLG = Bool2Bit(((si5b)t) < 0);
+				ZFLG = (0 == t);
 			}
 			break;
 	}

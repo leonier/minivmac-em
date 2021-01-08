@@ -38,7 +38,7 @@
 #define kRAM_Size (kRAMa_Size + kRAMb_Size)
 EXPORTVAR(ui3p, RAM)
 	/*
-		allocated by MYOSGLUE to be at least
+		allocated by OSGLUxxx to be at least
 			kRAM_Size + RAMSafetyMarginFudge
 		bytes. Because of shortcuts taken in GLOBGLUE.c, it is in theory
 		possible for the emulator to write up to 3 bytes past kRAM_Size.
@@ -165,8 +165,10 @@ enum {
 #if EmPMU
 	kICT_PMU_Task,
 #endif
+#if EmVIA1
 	kICT_VIA1_Timer1Check,
 	kICT_VIA1_Timer2Check,
+#endif
 #if EmVIA2
 	kICT_VIA2_Timer1Check,
 	kICT_VIA2_Timer2Check,

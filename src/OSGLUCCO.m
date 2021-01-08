@@ -24,13 +24,10 @@
 	by Sam Lantinga (but little trace of that remains).
 */
 
-#include "CNFGRAPI.h"
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
+#include "OSGCOMUI.h"
+#include "OSGCOMUD.h"
 
-#include "MYOSGLUE.h"
-
-#include "STRCONST.h"
+#ifdef WantOSGLUCCO
 
 /* --- adapting to API/ABI version differences --- */
 
@@ -276,6 +273,111 @@ LOCALFUNC blnr HaveMyCGCursorIsVisible(void)
 	return (MyCGCursorIsVisible != NULL);
 }
 
+#ifndef MyNSPasteboardTypeString
+#define MyNSPasteboardTypeString NSPasteboardTypeString
+#endif
+
+#ifndef MyNSEventModifierFlagCapsLock
+#define MyNSEventModifierFlagCapsLock NSEventModifierFlagCapsLock
+#endif
+
+#ifndef MyNSEventModifierFlagShift
+#define MyNSEventModifierFlagShift NSEventModifierFlagShift
+#endif
+
+#ifndef MyNSEventModifierFlagControl
+#define MyNSEventModifierFlagControl NSEventModifierFlagControl
+#endif
+
+#ifndef MyNSEventModifierFlagOption
+#define MyNSEventModifierFlagOption NSEventModifierFlagOption
+#endif
+
+#ifndef MyNSEventModifierFlagCommand
+#define MyNSEventModifierFlagCommand NSEventModifierFlagCommand
+#endif
+
+#ifndef MyNSWindowStyleMaskBorderless
+#define MyNSWindowStyleMaskBorderless NSWindowStyleMaskBorderless
+#endif
+
+#ifndef MyNSWindowStyleMaskTitled
+#define MyNSWindowStyleMaskTitled NSWindowStyleMaskTitled
+#endif
+
+#ifndef MyNSWindowStyleMaskMiniaturizable
+#define MyNSWindowStyleMaskMiniaturizable \
+	NSWindowStyleMaskMiniaturizable
+#endif
+
+#ifndef MyNSWindowStyleMaskClosable
+#define MyNSWindowStyleMaskClosable NSWindowStyleMaskClosable
+#endif
+
+#ifndef MyNSEventTypeLeftMouseDown
+#define MyNSEventTypeLeftMouseDown NSEventTypeLeftMouseDown
+#endif
+
+#ifndef MyNSEventTypeLeftMouseUp
+#define MyNSEventTypeLeftMouseUp NSEventTypeLeftMouseUp
+#endif
+
+#ifndef MyNSEventTypeRightMouseDown
+#define MyNSEventTypeRightMouseDown NSEventTypeRightMouseDown
+#endif
+
+#ifndef MyNSEventTypeRightMouseUp
+#define MyNSEventTypeRightMouseUp NSEventTypeRightMouseUp
+#endif
+
+#ifndef MyNSEventTypeOtherMouseDown
+#define MyNSEventTypeOtherMouseDown NSEventTypeOtherMouseDown
+#endif
+
+#ifndef MyNSEventTypeOtherMouseUp
+#define MyNSEventTypeOtherMouseUp NSEventTypeOtherMouseUp
+#endif
+
+#ifndef MyNSEventTypeMouseMoved
+#define MyNSEventTypeMouseMoved NSEventTypeMouseMoved
+#endif
+
+#ifndef MyNSEventTypeLeftMouseDragged
+#define MyNSEventTypeLeftMouseDragged NSEventTypeLeftMouseDragged
+#endif
+
+#ifndef MyNSEventTypeRightMouseDragged
+#define MyNSEventTypeRightMouseDragged NSEventTypeRightMouseDragged
+#endif
+
+#ifndef MyNSEventTypeOtherMouseDragged
+#define MyNSEventTypeOtherMouseDragged NSEventTypeOtherMouseDragged
+#endif
+
+#ifndef MyNSEventTypeKeyDown
+#define MyNSEventTypeKeyDown NSEventTypeKeyDown
+#endif
+
+#ifndef MyNSEventTypeKeyUp
+#define MyNSEventTypeKeyUp NSEventTypeKeyUp
+#endif
+
+#ifndef MyNSEventTypeFlagsChanged
+#define MyNSEventTypeFlagsChanged NSEventTypeFlagsChanged
+#endif
+
+#ifndef MyNSEventTypeFlagsChanged
+#define MyNSEventTypeFlagsChanged NSEventTypeFlagsChanged
+#endif
+
+#ifndef MyNSEventTypeApplicationDefined
+#define MyNSEventTypeApplicationDefined NSEventTypeApplicationDefined
+#endif
+
+#ifndef MyNSAnyEventMask
+#define MyNSAnyEventMask NSUIntegerMax
+#endif
+
 
 /* --- some simple utilities --- */
 
@@ -287,6 +389,9 @@ GLOBALOSGLUPROC MyMoveBytes(anyp srcPtr, anyp destPtr, si5b byteCount)
 /* --- control mode and internationalization --- */
 
 #define NeedCell2UnicodeMap 1
+#define NeedRequestInsertDisk 1
+#define NeedDoMoreCommandsMsg 1
+#define NeedDoAboutMsg 1
 
 #include "INTLCHAR.h"
 
@@ -1169,6 +1274,7 @@ LOCALFUNC blnr LoadMacRom(void)
 	{
 	}
 
+	(void) err; /* ignore any errors */
 	return trueblnr; /* keep launching Mini vMac, regardless */
 }
 
@@ -1205,10 +1311,12 @@ GLOBALOSGLUFUNC tMacErr HTCEexport(tPbuf i)
 			autorelease];
 		NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
 		NSArray *newTypes =
-			[NSArray arrayWithObject: NSStringPboardType];
+			[NSArray arrayWithObject: MyNSPasteboardTypeString];
 
 		(void) [pasteboard declareTypes: newTypes owner: nil];
-		if ([pasteboard setString: ss forType: NSStringPboardType]) {
+		if ([pasteboard setString: ss
+			forType: MyNSPasteboardTypeString])
+		{
 			err = mnvm_noErr;
 		}
 
@@ -1228,13 +1336,13 @@ GLOBALOSGLUFUNC tMacErr HTCEimport(tPbuf *r)
 	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
 	NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
 	NSArray *supportedTypes = [NSArray
-		arrayWithObject: NSStringPboardType];
+		arrayWithObject: MyNSPasteboardTypeString];
 	NSString *available = [pasteboard
 		availableTypeFromArray: supportedTypes];
 
 	if (nil != available) {
 		NSString *string = [pasteboard
-			stringForType: NSStringPboardType];
+			stringForType: MyNSPasteboardTypeString];
 		if (nil != string) {
 			err = NSStringToRomanPbuf(string, r);
 		}
@@ -1248,8 +1356,95 @@ GLOBALOSGLUFUNC tMacErr HTCEimport(tPbuf *r)
 
 
 #if EmLocalTalk
+LOCALFUNC blnr EntropyGather(void)
+{
+	/*
+		gather some entropy from several places, just in case
+		/dev/urandom is not available.
+	*/
 
-#include "BPFILTER.h"
+	{
+		NSTimeInterval v = [NSDate timeIntervalSinceReferenceDate];
+
+		EntropyPoolAddPtr((ui3p)&v, sizeof(v) / sizeof(ui3b));
+	}
+
+	{
+		NSPoint p = [NSEvent mouseLocation];
+
+		EntropyPoolAddPtr((ui3p)&p, sizeof(p) / sizeof(ui3b));
+	}
+
+	{
+		uimr t = [[NSProcessInfo processInfo] processIdentifier];
+
+		EntropyPoolAddPtr((ui3p)&t, sizeof(t) / sizeof(ui3b));
+	}
+
+	{
+		ui5b dat[2];
+		int fd;
+
+		if (-1 == (fd = open("/dev/urandom", O_RDONLY))) {
+#if dbglog_HAVE
+			dbglog_writeCStr("open /dev/urandom fails");
+			dbglog_writeNum(errno);
+			dbglog_writeCStr(" (");
+			dbglog_writeCStr(strerror(errno));
+			dbglog_writeCStr(")");
+			dbglog_writeReturn();
+#endif
+		} else {
+
+			if (read(fd, &dat, sizeof(dat)) < 0) {
+#if dbglog_HAVE
+				dbglog_writeCStr("open /dev/urandom fails");
+				dbglog_writeNum(errno);
+				dbglog_writeCStr(" (");
+				dbglog_writeCStr(strerror(errno));
+				dbglog_writeCStr(")");
+				dbglog_writeReturn();
+#endif
+			} else {
+
+#if dbglog_HAVE
+				dbglog_writeCStr("dat: ");
+				dbglog_writeHex(dat[0]);
+				dbglog_writeCStr(" ");
+				dbglog_writeHex(dat[1]);
+				dbglog_writeReturn();
+#endif
+
+				e_p[0] ^= dat[0];
+				e_p[1] ^= dat[1];
+					/*
+						if "/dev/urandom" is working correctly,
+						this should make the previous contents of e_p
+						irrelevant. if it is completely broken, like
+						returning 0, this will not make e_p any less
+						random.
+					*/
+
+#if dbglog_HAVE
+				dbglog_writeCStr("ep: ");
+				dbglog_writeHex(e_p[0]);
+				dbglog_writeCStr(" ");
+				dbglog_writeHex(e_p[1]);
+				dbglog_writeReturn();
+#endif
+			}
+
+			close(fd);
+		}
+	}
+
+	return trueblnr;
+}
+#endif
+
+#if EmLocalTalk
+
+#include "LOCALTLK.h"
 
 #endif
 
@@ -1351,15 +1546,15 @@ LOCALPROC MyUpdateKeyboardModifiers(NSUInteger newMods)
 	NSUInteger changeMask = MyCurrentMods ^ newMods;
 
 	if (0 != changeMask) {
-		if (0 != (changeMask & NSAlphaShiftKeyMask)) {
+		if (0 != (changeMask & MyNSEventModifierFlagCapsLock)) {
 			Keyboard_UpdateKeyMap2(MKC_formac_CapsLock,
-				0 != (newMods & NSAlphaShiftKeyMask));
+				0 != (newMods & MyNSEventModifierFlagCapsLock));
 		}
 
 #if MKC_formac_RShift == MKC_formac_Shift
-		if (0 != (changeMask & NSShiftKeyMask)) {
+		if (0 != (changeMask & MyNSEventModifierFlagShift)) {
 			Keyboard_UpdateKeyMap2(MKC_formac_Shift,
-				0 != (newMods & NSShiftKeyMask));
+				0 != (newMods & MyNSEventModifierFlagShift));
 		}
 #else
 		if (0 != (changeMask & My_NSLShiftKeyMask)) {
@@ -1373,9 +1568,9 @@ LOCALPROC MyUpdateKeyboardModifiers(NSUInteger newMods)
 #endif
 
 #if MKC_formac_RControl == MKC_formac_Control
-		if (0 != (changeMask & NSControlKeyMask)) {
+		if (0 != (changeMask & MyNSEventModifierFlagControl)) {
 			Keyboard_UpdateKeyMap2(MKC_formac_Control,
-				0 != (newMods & NSControlKeyMask));
+				0 != (newMods & MyNSEventModifierFlagControl));
 		}
 #else
 		if (0 != (changeMask & My_NSLControlKeyMask)) {
@@ -1389,9 +1584,9 @@ LOCALPROC MyUpdateKeyboardModifiers(NSUInteger newMods)
 #endif
 
 #if MKC_formac_RCommand == MKC_formac_Command
-		if (0 != (changeMask & NSCommandKeyMask)) {
+		if (0 != (changeMask & MyNSEventModifierFlagCommand)) {
 			Keyboard_UpdateKeyMap2(MKC_formac_Command,
-				0 != (newMods & NSCommandKeyMask));
+				0 != (newMods & MyNSEventModifierFlagCommand));
 		}
 #else
 		if (0 != (changeMask & My_NSLCommandKeyMask)) {
@@ -1405,9 +1600,9 @@ LOCALPROC MyUpdateKeyboardModifiers(NSUInteger newMods)
 #endif
 
 #if MKC_formac_ROption == MKC_formac_Option
-		if (0 != (changeMask & NSAlternateKeyMask)) {
+		if (0 != (changeMask & MyNSEventModifierFlagOption)) {
 			Keyboard_UpdateKeyMap2(MKC_formac_Option,
-				0 != (newMods & NSAlternateKeyMask));
+				0 != (newMods & MyNSEventModifierFlagOption));
 		}
 #else
 		if (0 != (changeMask & My_NSLOptionKeyMask)) {
@@ -2423,6 +2618,8 @@ label_retry:
 			dbglog_writeln("AudioOutputUnitStop fails");
 #endif
 		}
+
+		(void) result; /* ignore any errors */
 	}
 
 #if dbglog_SoundStuff
@@ -2432,9 +2629,9 @@ label_retry:
 
 LOCALPROC MySound_Start(void)
 {
-	OSStatus result;
-
 	if ((! cur_audio.wantplaying) && cur_audio.enabled) {
+		OSStatus result;
+
 #if dbglog_SoundStuff
 		dbglog_writeln("enter MySound_Start");
 #endif
@@ -2456,8 +2653,14 @@ LOCALPROC MySound_Start(void)
 #if dbglog_SoundStuff
 		dbglog_writeln("leave MySound_Start");
 #endif
+
+		(void) result; /* ignore any errors */
 	}
 }
+
+#ifndef UseAudioComp
+#define UseAudioComp 1
+#endif
 
 LOCALPROC MySound_UnInit(void)
 {
@@ -2485,6 +2688,18 @@ LOCALPROC MySound_UnInit(void)
 #endif
 		}
 
+		(void) result; /* ignore any errors */
+
+#if UseAudioComp
+		if (noErr != (result = AudioComponentInstanceDispose(
+			cur_audio.outputAudioUnit)))
+		{
+#if dbglog_HAVE
+			dbglog_writeln("AudioComponentInstanceDispose fails"
+				" in MySound_UnInit");
+#endif
+		}
+#else
 		if (noErr != (result = CloseComponent(
 			cur_audio.outputAudioUnit)))
 		{
@@ -2492,6 +2707,9 @@ LOCALPROC MySound_UnInit(void)
 			dbglog_writeln("CloseComponent fails in MySound_UnInit");
 #endif
 		}
+#endif
+
+		(void) result; /* ignore any errors */
 	}
 }
 
@@ -2500,8 +2718,13 @@ LOCALPROC MySound_UnInit(void)
 LOCALFUNC blnr MySound_Init(void)
 {
 	OSStatus result = noErr;
+#if UseAudioComp
+	AudioComponent comp;
+	AudioComponentDescription desc;
+#else
 	Component comp;
 	ComponentDescription desc;
+#endif
 	struct AURenderCallbackStruct callback;
 	AudioStreamBasicDescription requestedDesc;
 
@@ -2545,6 +2768,15 @@ LOCALFUNC blnr MySound_Init(void)
 	callback.inputProc = audioCallback;
 	callback.inputProcRefCon = &cur_audio;
 
+#if UseAudioComp
+	if (NULL == (comp = AudioComponentFindNext(NULL, &desc)))
+	{
+#if dbglog_HAVE
+		dbglog_writeln("Failed to start CoreAudio: "
+			"AudioComponentFindNext returned NULL");
+#endif
+	} else
+#else
 	if (NULL == (comp = FindNextComponent(NULL, &desc)))
 	{
 #if dbglog_HAVE
@@ -2552,7 +2784,18 @@ LOCALFUNC blnr MySound_Init(void)
 			"FindNextComponent returned NULL");
 #endif
 	} else
+#endif
 
+#if UseAudioComp
+	if (noErr != (result = AudioComponentInstanceNew(
+		comp, &cur_audio.outputAudioUnit)))
+	{
+#if dbglog_HAVE
+		dbglog_writeln("Failed to start CoreAudio:"
+			" AudioComponentInstanceNew");
+#endif
+	} else
+#else
 	if (noErr != (result = OpenAComponent(
 		comp, &cur_audio.outputAudioUnit)))
 	{
@@ -2560,6 +2803,7 @@ LOCALFUNC blnr MySound_Init(void)
 		dbglog_writeln("Failed to start CoreAudio: OpenAComponent");
 #endif
 	} else
+#endif
 
 	if (noErr != (result = AudioUnitInitialize(
 		cur_audio.outputAudioUnit)))
@@ -2610,6 +2854,7 @@ LOCALFUNC blnr MySound_Init(void)
 			*/
 	}
 
+	(void) result; /* ignore any errors */
 	return trueblnr; /* keep going, even if no sound */
 }
 
@@ -2663,7 +2908,8 @@ LOCALFUNC NSMenu *setApplicationMenu(NSMenu *mainMenu)
 	menuItem = [appleMenu addItemWithTitle: sAbout
 		action: @selector(performApplicationAbout:)
 		keyEquivalent: @"a"];
-	[menuItem setKeyEquivalentModifierMask: NSControlKeyMask];
+	[menuItem
+		setKeyEquivalentModifierMask: MyNSEventModifierFlagControl];
 
 	[appleMenu addItem:[NSMenuItem separatorItem]];
 
@@ -2683,7 +2929,8 @@ LOCALFUNC NSMenu *setApplicationMenu(NSMenu *mainMenu)
 
 	menuItem = [appleMenu addItemWithTitle: sQuit
 		action: @selector(terminate:) keyEquivalent: @"q"];
-	[menuItem setKeyEquivalentModifierMask: NSControlKeyMask];
+	[menuItem
+		setKeyEquivalentModifierMask: MyNSEventModifierFlagControl];
 
 	FinishSubMenu(appleMenu, mainMenu, sAppName);
 
@@ -2708,7 +2955,8 @@ LOCALPROC setupFileMenu(NSMenu *mainMenu)
 		addItemWithTitle: sOpen
 		action: @selector(performFileOpen:)
 		keyEquivalent: @"o"];
-	[menuItem setKeyEquivalentModifierMask: NSControlKeyMask];
+	[menuItem
+		setKeyEquivalentModifierMask: MyNSEventModifierFlagControl];
 
 	FinishSubMenu(fileMenu, mainMenu, sFile);
 
@@ -2770,10 +3018,30 @@ LOCALPROC MyMenuSetup(void)
 LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
 	ui4r bottom, ui4r right)
 {
-	if ([MyNSview lockFocusIfCanDraw]) {
+#if 0
+	if ([MyNSview lockFocusIfCanDraw])
+	/*
+		when compiled with XCode 11.4.1,
+		running in macOS 10.15, this causes
+		drawRect to later be called for
+		entire window.
+	*/
+#endif
+	if ([MyNSview canDraw])
+	{
 		MyDrawWithOpenGL(top, left, bottom, right);
+#if 0
 		[MyNSview unlockFocus];
+#endif
 	}
+
+/*
+	would make sense to instead call:
+		[MyNSview setNeedsDisplayInRect:rectangle];
+	but that doesn't work either when
+		compiled with XCode 11.4.1. drawRect
+		seems to think entire view is dirty.
+*/
 }
 #else
 LOCALPROC HaveChangedScreenBuff(ui4r top, ui4r left,
@@ -2944,8 +3212,6 @@ LOCALPROC DisconnectKeyCodes3(void)
 
 LOCALPROC CheckSavedMacMsg(void)
 {
-	/* called only on quit, if error saved but not yet reported */
-
 	if (nullpr != SavedBriefMsg) {
 		NSString *briefMsg0 =
 			NSStringCreateFromSubstCStr(SavedBriefMsg);
@@ -3169,6 +3435,10 @@ LOCALPROC CloseMyOpenGLContext(void)
 		*/
 	}
 }
+
+@interface MyClassNSview : NSObject
+- (void)setWantsBestResolutionOpenGLSurface:(BOOL)aBool;
+@end
 
 LOCALFUNC blnr GetOpnGLCntxt(void)
 {
@@ -3405,6 +3675,28 @@ typedef NSUInteger (*modifierFlagsProcPtr)
 	*/
 	if (GetOpnGLCntxt()) {
 		MyDrawWithOpenGL(0, 0, vMacScreenHeight, vMacScreenWidth);
+
+		/*
+			since drawRect is called very rarely, didn't
+			bother above to calculate actual coordinates
+			to pass to MyDrawWithOpenGL.
+
+			if it did matter, could get list of dirty
+			rectangles, instead of dirtyRect that is
+			supposed to be their union. as follows:
+		*/
+#if 0
+		{
+			const NSRect *rectList;
+			NSInteger count;
+			NSInteger i;
+
+			[self getRectsBeingDrawn:&rectList count:&count];
+			for (i = 0; i < count; i++) {
+				MyDrawWithOpenGL(<converted> rectList[i]);
+			}
+		}
+#endif
 	}
 }
 
@@ -3588,7 +3880,7 @@ LOCALFUNC blnr CreateMainWindow(void)
 		hOffset = GLhOffset;
 		vOffset = AllScrnBounds.size.height - GLvOffset;
 
-		style = NSBorderlessWindowMask;
+		style = MyNSWindowStyleMaskBorderless;
 	}
 #endif
 #if VarFullScreen
@@ -3622,8 +3914,9 @@ LOCALFUNC blnr CreateMainWindow(void)
 		GLhOffset = 0;
 		GLvOffset = NewWindowHeight;
 
-		style = NSTitledWindowMask
-			| NSMiniaturizableWindowMask | NSClosableWindowMask;
+		style = MyNSWindowStyleMaskTitled
+			| MyNSWindowStyleMaskMiniaturizable
+			| MyNSWindowStyleMaskClosable;
 
 		CurWinIndx = WinIndx;
 	}
@@ -3672,11 +3965,28 @@ LOCALFUNC blnr CreateMainWindow(void)
 #endif
 		goto label_exit;
 	}
+
+	/*
+		found in SDL 2.0.12:
+		"Note: as of the macOS 10.15 SDK, this defaults to YES
+		instead of NO when the NSHighResolutionCapable boolean
+		is set in Info.plist."
+	*/
+	if ([MyNSview respondsToSelector:@selector(
+		setWantsBestResolutionOpenGLSurface:)])
+	{
+		[((MyClassNSview *)MyNSview)
+			setWantsBestResolutionOpenGLSurface:NO];
+	}
+
 	[MyWindow setContentView: MyNSview];
 
 	[MyWindow makeKeyAndOrderFront: nil];
 
-	/* just in case drawRect didn't get called */
+	/*
+		just in case drawRect didn't get called
+		during makeKeyAndOrderFront
+	*/
 	if (! GetOpnGLCntxt()) {
 #if dbglog_HAVE
 		dbglog_writeln("Could not GetOpnGLCntxt");
@@ -4410,9 +4720,9 @@ LOCALPROC ProcessKeyEvent(blnr down, NSEvent *event)
 LOCALPROC ProcessOneSystemEvent(NSEvent *event)
 {
 	switch ([event type]) {
-		case NSLeftMouseDown:
-		case NSRightMouseDown:
-		case NSOtherMouseDown:
+		case MyNSEventTypeLeftMouseDown:
+		case MyNSEventTypeRightMouseDown:
+		case MyNSEventTypeOtherMouseDown:
 			/*
 				int button = QZ_OtherMouseButtonToSDL(
 					[event buttonNumber]);
@@ -4437,9 +4747,9 @@ LOCALPROC ProcessOneSystemEvent(NSEvent *event)
 			}
 			break;
 
-		case NSLeftMouseUp:
-		case NSRightMouseUp:
-		case NSOtherMouseUp:
+		case MyNSEventTypeLeftMouseUp:
+		case MyNSEventTypeRightMouseUp:
+		case MyNSEventTypeOtherMouseUp:
 			/*
 				int button = QZ_OtherMouseButtonToSDL(
 					[event buttonNumber]);
@@ -4454,15 +4764,15 @@ LOCALPROC ProcessOneSystemEvent(NSEvent *event)
 			}
 			break;
 
-		case NSMouseMoved:
+		case MyNSEventTypeMouseMoved:
 			{
 				ProcessEventLocation(event);
 				ProcessEventModifiers(event);
 			}
 			break;
-		case NSLeftMouseDragged:
-		case NSRightMouseDragged:
-		case NSOtherMouseDragged:
+		case MyNSEventTypeLeftMouseDragged:
+		case MyNSEventTypeRightMouseDragged:
+		case MyNSEventTypeOtherMouseDragged:
 			if (! MyMouseButtonState) {
 				/* doesn't belong to us ? */
 				[NSApp sendEvent: event];
@@ -4471,19 +4781,19 @@ LOCALPROC ProcessOneSystemEvent(NSEvent *event)
 				ProcessEventModifiers(event);
 			}
 			break;
-		case NSKeyUp:
+		case MyNSEventTypeKeyUp:
 			ProcessKeyEvent(falseblnr, event);
 			break;
-		case NSKeyDown:
+		case MyNSEventTypeKeyDown:
 			ProcessKeyEvent(trueblnr, event);
 			break;
-		case NSFlagsChanged:
+		case MyNSEventTypeFlagsChanged:
 			ProcessEventModifiers(event);
 			break;
 		/* case NSScrollWheel: */
 		/* case NSSystemDefined: */
 		/* case NSAppKitDefined: */
-		/* case NSApplicationDefined: */
+		/* case MyNSEventTypeApplicationDefined: */
 		/* case NSPeriodic: */
 		/* case NSCursorUpdate: */
 		default:
@@ -4513,7 +4823,7 @@ label_retry:
 
 	i = 32;
 	while ((--i >= 0) && (nil != (event =
-		[NSApp nextEventMatchingMask: NSAnyEventMask
+		[NSApp nextEventMatchingMask: MyNSAnyEventMask
 			untilDate: TheUntil
 			inMode: NSDefaultRunLoopMode
 			dequeue: YES])))
@@ -4597,6 +4907,10 @@ typedef Boolean (*SecTranslocateIsTranslocatedURL_t)(
 	CFURLRef path, bool *isTranslocated, CFErrorRef * error);
 typedef CFURLRef (*SecTranslocateCreateOriginalPathForURL_t)(
 	CFURLRef translocatedPath, CFErrorRef * error);
+
+#ifndef WantUnTranslocate
+#define WantUnTranslocate 0
+#endif
 
 LOCALFUNC blnr setupWorkingDirectory(void)
 {
@@ -4720,7 +5034,7 @@ LOCALFUNC blnr setupWorkingDirectory(void)
 			http://www.cocoabuilder.com/ post.)
 		*/
 		NSEvent* event = [NSEvent
-			otherEventWithType: NSApplicationDefined
+			otherEventWithType: MyNSEventTypeApplicationDefined
 			location: NSMakePoint(0, 0)
 			modifierFlags: 0
 			timestamp: 0.0
@@ -4911,12 +5225,13 @@ LOCALFUNC blnr InitOSGLU(void)
 #if UseActvCode
 	if (ActvCodeInit())
 #endif
-#if EmLocalTalk
-	if (InitLocalTalk())
-#endif
 	if (InitLocationDat())
 	if (Screen_Init())
 	if (CreateMainWindow())
+#if EmLocalTalk
+	if (EntropyGather())
+	if (InitLocalTalk())
+#endif
 	if (WaitForRom())
 	{
 		IsOk = trueblnr;
@@ -4943,6 +5258,9 @@ LOCALPROC UnInitOSGLU(void)
 		MacMsgDisplayOff();
 	}
 
+#if EmLocalTalk
+	UnInitLocalTalk();
+#endif
 	RestoreKeyRepeat();
 #if MayFullScreen
 	UngrabMachine();
@@ -4991,3 +5309,5 @@ int main(int argc, char **argv)
 
 	return 0;
 }
+
+#endif /* WantOSGLUCCO */

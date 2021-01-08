@@ -416,9 +416,17 @@ LOCALPROC MacMsgOverride(char *briefMsg, char *longMsg)
 {
 	if (MacMsgDisplayed) {
 		MacMsgDisplayOff();
+		SpecialModeSet(SpclModeMessage);
 	}
 	MacMsg(briefMsg, longMsg, falseblnr);
 }
+
+#if dbglog_HAVE
+GLOBALOSGLUPROC MacMsgDebugAlert(char *s)
+{
+	MacMsgOverride("Debug", s);
+}
+#endif
 
 #if NeedDoMoreCommandsMsg
 LOCALPROC DoMoreCommandsMsg(void)
@@ -1336,14 +1344,14 @@ LOCALPROC WarnMsgUnsupportedROM(void)
 LOCALFUNC tMacErr ROM_IsValid(void)
 {
 #if CheckRomCheckSum
-	ui5r CheckSum = Calc_Checksum();
-
+	ui5r CheckSum =
 #if RomStartCheckSum
-	if (CheckSum != do_get_mem_long(ROM)) {
-		WarnMsgCorruptedROM();
-		return mnvm_miscErr;
-	} else
+		do_get_mem_long(ROM)
+#else
+		Calc_Checksum()
 #endif
+		;
+
 #ifdef kRomCheckSum1
 	if (CheckSum == kRomCheckSum1) {
 	} else
@@ -1366,6 +1374,17 @@ LOCALFUNC tMacErr ROM_IsValid(void)
 		[update: no, don't]
 	*/
 
+#if RomStartCheckSum
+	{
+		ui5r CheckSumActual = Calc_Checksum();
+
+		if (CheckSum != CheckSumActual) {
+			WarnMsgCorruptedROM();
+			return mnvm_miscErr;
+		}
+	}
+#endif
+
 #endif /* CheckRomCheckSum */
 
 	ROM_loaded = trueblnr;
@@ -1373,6 +1392,15 @@ LOCALFUNC tMacErr ROM_IsValid(void)
 
 	return mnvm_noErr;
 }
+
+#if NonDiskProtect
+GLOBALOSGLUPROC WarnMsgUnsupportedDisk(void)
+{
+	MacMsgOverride("Unsupported Disk Image",
+		"I do not recognize the format of the Disk Image,"
+		" and so will not try to mount it.");
+}
+#endif
 
 LOCALFUNC blnr WaitForRom(void)
 {

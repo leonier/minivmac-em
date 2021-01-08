@@ -24,15 +24,7 @@
 	Bernd Schmidt.
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-
-#include "MYOSGLUE.h"
-#include "ENDIANAC.h"
-#include "EMCONFIG.h"
-#endif
-
-#include "GLOBGLUE.h"
+#include "PICOMMON.h"
 
 /*
 	ReportAbnormalID unused 0x111D - 0x11FF
@@ -46,7 +38,9 @@ IMPORTPROC m68k_reset(void);
 IMPORTPROC IWM_Reset(void);
 IMPORTPROC SCC_Reset(void);
 IMPORTPROC SCSI_Reset(void);
+#if EmVIA1
 IMPORTPROC VIA1_Reset(void);
+#endif
 #if EmVIA2
 IMPORTPROC VIA2_Reset(void);
 #endif
@@ -73,7 +67,9 @@ IMPORTFUNC ATTep FindATTel(CPTR addr);
 IMPORTFUNC ui5b SCSI_Access(ui5b Data, blnr WriteMem, CPTR addr);
 IMPORTFUNC ui5b SCC_Access(ui5b Data, blnr WriteMem, CPTR addr);
 IMPORTFUNC ui5b IWM_Access(ui5b Data, blnr WriteMem, CPTR addr);
+#if EmVIA1
 IMPORTFUNC ui5b VIA1_Access(ui5b Data, blnr WriteMem, CPTR addr);
+#endif
 #if EmVIA2
 IMPORTFUNC ui5b VIA2_Access(ui5b Data, blnr WriteMem, CPTR addr);
 #endif
@@ -96,7 +92,9 @@ GLOBALPROC customreset(void)
 	IWM_Reset();
 	SCC_Reset();
 	SCSI_Reset();
+#if EmVIA1
 	VIA1_Reset();
+#endif
 #if EmVIA2
 	VIA2_Reset();
 #endif
@@ -626,7 +624,9 @@ GLOBALPROC Extn_Reset(void)
 
 #define kSCC_Mask 0x03
 
+#if EmVIA1
 #define kVIA1_Mask 0x00000F
+#endif
 #if EmVIA2
 #define kVIA2_Mask 0x00000F
 #endif
@@ -666,7 +666,9 @@ GLOBALPROC Extn_Reset(void)
 #endif
 
 enum {
+#if EmVIA1
 	kMMDV_VIA1,
+#endif
 #if EmVIA2
 	kMMDV_VIA2,
 #endif
@@ -1303,6 +1305,7 @@ GLOBALFUNC ui5b MMDV_Access(ATTep p, ui5b Data,
 	blnr WriteMem, blnr ByteSize, CPTR addr)
 {
 	switch (p->MMDV) {
+#if EmVIA1
 		case kMMDV_VIA1:
 			if (! ByteSize) {
 #if (CurEmMd == kEmMd_II) || (CurEmMd == kEmMd_IIx)
@@ -1338,6 +1341,7 @@ GLOBALFUNC ui5b MMDV_Access(ATTep p, ui5b Data,
 			}
 
 			break;
+#endif /* EmVIA1 */
 #if EmVIA2
 		case kMMDV_VIA2:
 			if (! ByteSize) {
@@ -1375,7 +1379,7 @@ GLOBALFUNC ui5b MMDV_Access(ATTep p, ui5b Data,
 					(addr >> 9) & kVIA2_Mask);
 			}
 			break;
-#endif
+#endif /* EmVIA2 */
 		case kMMDV_SCC:
 
 #if (CurEmMd >= kEmMd_SE) \

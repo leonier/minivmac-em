@@ -18,16 +18,11 @@
 	DISAssemble Motorola 68K instructions.
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
+#include "PICOMMON.h"
 
-#include "ENDIANAC.h"
-#include "MYOSGLUE.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
+#if WantDisasm
 
 #include "M68KITAB.h"
-#endif
 
 #include "DISAM68K.h"
 
@@ -867,7 +862,7 @@ LOCALPROCUSEDONCE DisasmBitOpDM(void)
 	dbglog_writeCStr(" ");
 	DisasmModeRegister(0, Disasm_rg9);
 	dbglog_writeCStr(", ");
-	DisasmModeRegister(Disasm_mode, Disasm_rg9);
+	DisasmModeRegister(Disasm_mode, Disasm_reg);
 	dbglog_writeReturn();
 }
 
@@ -891,7 +886,7 @@ LOCALPROCUSEDONCE DisasmBitOpNM(void)
 	dbglog_writeCStr(" #");
 	dbglog_writeHex(ui5r_FromSByte(Disasm_nextibyte()));
 	dbglog_writeCStr(", ");
-	DisasmModeRegister(Disasm_mode, Disasm_rg9);
+	DisasmModeRegister(Disasm_mode, Disasm_reg);
 	dbglog_writeReturn();
 }
 
@@ -2938,3 +2933,5 @@ GLOBALPROC m68k_WantDisasmContext(void)
 	DisasmSavedPCs();
 	DisasmCounter = /* 256 */ 128;
 }
+
+#endif /* WantDisasm */

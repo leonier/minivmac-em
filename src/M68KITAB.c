@@ -18,13 +18,7 @@
 	Motorola 68K Instructions TABle
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-#endif
-
-#include "MYOSGLUE.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
+#include "PICOMMON.h"
 
 #include "M68KITAB.h"
 
@@ -698,7 +692,7 @@ LOCALPROCUSEDONCE DeCode0(WorkR *p)
 		}
 	} else {
 		if (rg9(p) == 4) {
-			/* static bit 00001010ssmmmrrr */
+			/* static bit 00001000ssmmmrrr */
 			if (mode(p) == 0) {
 				p->opsize = 4;
 #if WantCycByPriOp
@@ -848,34 +842,38 @@ LOCALPROCUSEDONCE DeCode0(WorkR *p)
 #endif
 		} else {
 			if ((mode(p) == 7) && (reg(p) == 4)) {
-				switch (rg9(p)) {
-					case 0:
+				if (b76(p) >= 2) {
+					p->MainClass = kIKindIllegal;
+				} else {
+					switch (rg9(p)) {
+						case 0:
 #if WantCycByPriOp
-						p->Cycles =
-							(20 * kCycleScale + 3 * RdAvgXtraCyc);
+							p->Cycles =
+								(20 * kCycleScale + 3 * RdAvgXtraCyc);
 #endif
-						p->MainClass = (0 != b76(p))
-							? kIKindOrISR : kIKindOrICCR;
-						break;
-					case 1:
+							p->MainClass = (0 != b76(p))
+								? kIKindOrISR : kIKindOrICCR;
+							break;
+						case 1:
 #if WantCycByPriOp
-						p->Cycles =
-							(20 * kCycleScale + 3 * RdAvgXtraCyc);
+							p->Cycles =
+								(20 * kCycleScale + 3 * RdAvgXtraCyc);
 #endif
-						p->MainClass = (0 != b76(p))
-							? kIKindAndISR : kIKindAndICCR;
-						break;
-					case 5:
+							p->MainClass = (0 != b76(p))
+								? kIKindAndISR : kIKindAndICCR;
+							break;
+						case 5:
 #if WantCycByPriOp
-						p->Cycles =
-							(20 * kCycleScale + 3 * RdAvgXtraCyc);
+							p->Cycles =
+								(20 * kCycleScale + 3 * RdAvgXtraCyc);
 #endif
-						p->MainClass = (0 != b76(p))
-							? kIKindEorISR : kIKindEorICCR;
-						break;
-					default:
-						p->MainClass = kIKindIllegal;
-						break;
+							p->MainClass = (0 != b76(p))
+								? kIKindEorISR : kIKindEorICCR;
+							break;
+						default:
+							p->MainClass = kIKindIllegal;
+							break;
+					}
 				}
 			} else {
 				switch (rg9(p)) {
@@ -1389,7 +1387,7 @@ LOCALPROCUSEDONCE DeCode4(WorkR *p)
 						p->MainClass = kIKindNot;
 					}
 				} else {
-					/* Move from SR 0100011011mmmrrr */
+					/* Move to SR 0100011011mmmrrr */
 					p->opsize = 2;
 					if (CheckDataAddrMode(p)) {
 #if WantCycByPriOp
@@ -1587,7 +1585,7 @@ LOCALPROCUSEDONCE DeCode4(WorkR *p)
 				break;
 			case 6:
 				if (((p->opcode >> 7) & 1) == 1) {
-					/* MOVEM mem to reg 0100110011smmmrrr */
+					/* MOVEM mem to reg 010011001smmmrrr */
 					p->opsize = 2 * b76(p) - 2;
 					if (mode(p) == 3) {
 #if WantCycByPriOp
@@ -1721,7 +1719,7 @@ LOCALPROCUSEDONCE DeCode4(WorkR *p)
 							case 6:
 								switch (reg(p)) {
 									case 0:
-										/* Reset 0100111001100000 */
+										/* Reset 0100111001110000 */
 #if WantCycByPriOp
 										p->Cycles = (132 * kCycleScale
 											+ RdAvgXtraCyc);
@@ -1975,24 +1973,30 @@ LOCALPROCUSEDONCE DeCode5(WorkR *p)
 		}
 	} else {
 		if (mode(p) == 1) {
-			p->opsize = b8(p) * 2 + 2;
-			SetDcoArgFields(p, trueblnr, kAMdDat4,
-				octdat(rg9(p)));
-			SetDcoArgFields(p, falseblnr, kAMdRegL,
-				reg(p) + 8);
-				/* always long, regardless of opsize */
-			if (b8(p) == 0) {
-#if WantCycByPriOp
-				p->Cycles = (4 == p->opsize)
-					? (8 * kCycleScale + RdAvgXtraCyc)
-					: (4 * kCycleScale + RdAvgXtraCyc);
-#endif
-				p->MainClass = kIKindAddQA; /* AddQA 0101nnn0ss001rrr */
+			if (0 == b76(p)) {
+				p->MainClass = kIKindIllegal;
 			} else {
+				p->opsize = b76(p) * 2 + 2;
+				SetDcoArgFields(p, trueblnr, kAMdDat4,
+					octdat(rg9(p)));
+				SetDcoArgFields(p, falseblnr, kAMdRegL,
+					reg(p) + 8);
+					/* always long, regardless of opsize */
+				if (b8(p) == 0) {
+					/* AddQA 0101nnn0ss001rrr */
 #if WantCycByPriOp
-				p->Cycles = (8 * kCycleScale + RdAvgXtraCyc);
+					p->Cycles = (4 == p->opsize)
+						? (8 * kCycleScale + RdAvgXtraCyc)
+						: (4 * kCycleScale + RdAvgXtraCyc);
 #endif
-				p->MainClass = kIKindSubQA; /* SubQA 0101nnn1ss001rrr */
+					p->MainClass = kIKindAddQA;
+				} else {
+					/* SubQA 0101nnn1ss001rrr */
+#if WantCycByPriOp
+					p->Cycles = (8 * kCycleScale + RdAvgXtraCyc);
+#endif
+					p->MainClass = kIKindSubQA;
+				}
 			}
 		} else {
 			FindOpSizeFromb76(p);
@@ -2077,8 +2081,8 @@ LOCALPROCUSEDONCE DeCode6(WorkR *p)
 			p->DecOp.y.v[1].ArgDat = p->opcode & 255;
 		}
 	} else {
-		p->DecOp.y.v[0].ArgDat = cond;
 		/* Bcc 0110ccccnnnnnnnn */
+		p->DecOp.y.v[0].ArgDat = cond;
 		if (0 == (p->opcode & 255)) {
 #if WantCycByPriOp
 #if WantCloserCyc
@@ -2491,8 +2495,8 @@ LOCALPROCUSEDONCE DeCodeB(WorkR *p)
 				p->MainClass = kIKindCmpB + OpSizeOffset(p);
 			}
 		} else {
-#if 0
 			/* Eor 1011ddd1ssmmmrrr */
+#if 0
 			if (CheckDataAltAddrMode(p)) {
 				p->MainClass = kIKindEor;
 			}

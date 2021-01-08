@@ -21,13 +21,10 @@
 	GIMP Toolkit should go here.
 */
 
-#include "CNFGRAPI.h"
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
+#include "OSGCOMUI.h"
+#include "OSGCOMUD.h"
 
-#include "MYOSGLUE.h"
-
-#include "STRCONST.h"
+#ifdef WantOSGLUGTK
 
 #include "COMOSGLU.h"
 
@@ -41,6 +38,9 @@ GLOBALOSGLUPROC MyMoveBytes(anyp srcPtr, anyp destPtr, si5b byteCount)
 /* --- control mode and internationalization --- */
 
 #define NeedCell2PlainAsciiMap 1
+#define NeedRequestInsertDisk 1
+#define NeedDoMoreCommandsMsg 1
+#define NeedDoAboutMsg 1
 
 #include "INTLCHAR.h"
 
@@ -1762,3 +1762,5 @@ int main(int argc, char *argv[])
 
 	return 0;
 }
+
+#endif /* WantOSGLUGTK */

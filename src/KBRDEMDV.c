@@ -22,12 +22,9 @@
 	This code adapted from "Keyboard.c" in vMac by Philip Cummins.
 */
 
-#ifndef AllFiles
-#include "SYSDEPNS.h"
-#include "MYOSGLUE.h"
-#include "EMCONFIG.h"
-#include "GLOBGLUE.h"
-#endif
+#include "PICOMMON.h"
+
+#if EmClassicKbrd
 
 #include "KBRDEMDV.h"
 
@@ -212,3 +209,5 @@ GLOBALPROC KeyBoard_Update(void)
 		}
 	}
 }
+
+#endif /* EmClassicKbrd */

@@ -18,6 +18,9 @@
 /*
 	Operating System GLUe for macintosh OS X
 
+		(uses Carbon API. the more recent
+			OSGLUCCO.m uses the Cocoa API)
+
 	All operating system dependent code for the
 	Macintosh platform should go here.
 
@@ -27,11 +30,11 @@
 	The main entry point 'main' is at the end of this file.
 */
 
-#include "CNFGRAPI.h"
-#include "SYSDEPNS.h"
-#include "ENDIANAC.h"
+#include "OSGCOMUI.h"
+#include "OSGCOMUD.h"
 
-#include "MYOSGLUE.h"
+#ifdef WantOSGLUOSX
+
 
 /* --- adapting to API/ABI version differences --- */
 
@@ -651,9 +654,10 @@ LOCALPROC PStrFromChar(ps3p r, char x)
 #define CheckSaveMacErr(result) (CheckSavetMacErr(To_tMacErr(result)))
 
 
-#include "STRCONST.h"
-
 #define NeedCell2UnicodeMap 1
+#define NeedRequestInsertDisk 1
+#define NeedDoMoreCommandsMsg 1
+#define NeedDoAboutMsg 1
 
 #include "INTLCHAR.h"
 
@@ -1168,8 +1172,104 @@ GLOBALOSGLUFUNC tMacErr HTCEimport(tPbuf *r)
 
 
 #if EmLocalTalk
+LOCALFUNC blnr EntropyGather(void)
+{
+	/*
+		gather some entropy from several places, just in case
+		/dev/urandom is not available.
+	*/
 
-#include "BPFILTER.h"
+	{
+		EventTime v = GetCurrentEventTime();
+
+		EntropyPoolAddPtr((ui3p)&v, sizeof(v) / sizeof(ui3b));
+	}
+
+	{
+		CFAbsoluteTime v = CFAbsoluteTimeGetCurrent();
+
+		EntropyPoolAddPtr((ui3p)&v, sizeof(v) / sizeof(ui3b));
+	}
+
+	{
+		Point v;
+
+		GetGlobalMouse(&v);
+		EntropyPoolAddPtr((ui3p)&v, sizeof(v) / sizeof(ui3b));
+	}
+
+	{
+		ProcessSerialNumber v;
+
+		(void) GetFrontProcess(&v);
+		EntropyPoolAddPtr((ui3p)&v, sizeof(v) / sizeof(ui3b));
+	}
+
+	{
+		ui5b dat[2];
+		int fd;
+
+		if (-1 == (fd = open("/dev/urandom", O_RDONLY))) {
+#if dbglog_HAVE
+			dbglog_writeCStr("open /dev/urandom fails");
+			dbglog_writeNum(errno);
+			dbglog_writeCStr(" (");
+			dbglog_writeCStr(strerror(errno));
+			dbglog_writeCStr(")");
+			dbglog_writeReturn();
+#endif
+		} else {
+
+			if (read(fd, &dat, sizeof(dat)) < 0) {
+#if dbglog_HAVE
+				dbglog_writeCStr("open /dev/urandom fails");
+				dbglog_writeNum(errno);
+				dbglog_writeCStr(" (");
+				dbglog_writeCStr(strerror(errno));
+				dbglog_writeCStr(")");
+				dbglog_writeReturn();
+#endif
+			} else {
+
+#if dbglog_HAVE
+				dbglog_writeCStr("dat: ");
+				dbglog_writeHex(dat[0]);
+				dbglog_writeCStr(" ");
+				dbglog_writeHex(dat[1]);
+				dbglog_writeReturn();
+#endif
+
+				e_p[0] ^= dat[0];
+				e_p[1] ^= dat[1];
+					/*
+						if "/dev/urandom" is working correctly,
+						this should make the previous contents of e_p
+						irrelevant. if it is completely broken, like
+						returning 0, this will not make e_p any less
+						random.
+					*/
+
+#if dbglog_HAVE
+				dbglog_writeCStr("ep: ");
+				dbglog_writeHex(e_p[0]);
+				dbglog_writeCStr(" ");
+				dbglog_writeHex(e_p[1]);
+				dbglog_writeReturn();
+#endif
+			}
+
+			close(fd);
+		}
+	}
+
+	return trueblnr;
+}
+#endif
+
+
+#if EmLocalTalk
+
+#include "LOCALTLK.h"
 
 #endif
 
@@ -2821,8 +2921,6 @@ LOCALFUNC CFStringRef CFStringCreateFromSubstCStr(char *s)
 
 LOCALPROC CheckSavedMacMsg(void)
 {
-	/* called only on quit, if error saved but not yet reported */
-
 	if (nullpr != SavedBriefMsg) {
 		if (HaveMyCreateStandardAlert() && HaveMyRunStandardAlert()) {
 			CFStringRef briefMsgu = CFStringCreateFromSubstCStr(
@@ -5370,10 +5468,11 @@ LOCALFUNC blnr InitOSGLU(void)
 #if UseActvCode
 	if (ActvCodeInit())
 #endif
+	if (InitLocationDat())
 #if EmLocalTalk
+	if (EntropyGather())
 	if (InitLocalTalk())
 #endif
-	if (InitLocationDat())
 	if (WaitForRom())
 	{
 		return trueblnr;
@@ -5400,6 +5499,10 @@ LOCALPROC UnInitOSGLU(void)
 	if (MacMsgDisplayed) {
 		MacMsgDisplayOff();
 	}
+
+#if EmLocalTalk
+	UnInitLocalTalk();
+#endif
 
 #if MayFullScreen
 	UngrabMachine();
@@ -5562,3 +5665,5 @@ int main(void)
 
 	return 0;
 }
+
+#endif /* WantOSGLUOSX */
